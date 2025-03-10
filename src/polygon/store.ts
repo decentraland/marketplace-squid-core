@@ -34,16 +34,6 @@ export const getStoredData = async (
   const { accountIds, tokenIds, analyticsIds, bidIds, collectionIds, itemIds } =
     ids;
 
-  const accountIdsToLookFor = [...accountIds].map(
-    (id) => `${id}-${ModelNetwork.POLYGON}`
-  );
-  const accounts = await ctx.store
-    .findBy(Account, {
-      id: In(accountIdsToLookFor),
-      network: ModelNetwork.POLYGON,
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
   // grab ids from all nfts to query
   const nftIds = [
     ...Array.from(tokenIds.entries())
@@ -132,6 +122,22 @@ export const getStoredData = async (
           network: ModelNetwork.POLYGON,
         },
       ],
+    })
+    .then((q) => new Map(q.map((i) => [i.id, i])));
+
+  const itemRelatedAccounts = [
+    ...Array.from(items.values()).map((item) => item.creator), // load creator accounts
+    ...Array.from(items.values()).map((item) => item.beneficiary), // load beneficiary accounts
+  ];
+
+  const accountIdsToLookFor = [...accountIds, ...itemRelatedAccounts].map(
+    (id) => `${id}-${ModelNetwork.POLYGON}`
+  );
+
+  const accounts = await ctx.store
+    .findBy(Account, {
+      id: In(accountIdsToLookFor),
+      network: ModelNetwork.POLYGON,
     })
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
