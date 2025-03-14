@@ -15,8 +15,8 @@ Dependencies: Node.js, Docker, Git.
 npm i -g @subsquid/cli
 
 # 1. Clone the repo
-git clone https://github.com/decentraland/marketplace-squid
-cd marketplace-squid
+git clone https://github.com/decentraland/marketplace-squid-core
+cd marketplace-squid-core
 
 # 2. Install dependencies
 npm ci
