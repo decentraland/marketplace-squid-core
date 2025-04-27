@@ -1,6 +1,32 @@
 #!/bin/sh
 
-# Generate a unique schema name and user credentials using a timestamp
+# Check if this is resume mode or fresh start
+if [ "$RESUME_MODE" = "true" ]; then
+  echo "RESUME MODE: Continuing indexing with existing user and schema"
+  
+  # In resume mode, we expect the existing DB_USER, DB_NAME, DB_PASSWORD, DB_HOST, DB_SCHEMA, and DB_PORT to be set correctly
+  if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ] || [ -z "$DB_SCHEMA" ]; then
+    echo "Error: Required environment variables for resume mode are not set."
+    echo "Ensure DB_USER, DB_NAME, DB_PASSWORD, DB_HOST, DB_PORT, and DB_SCHEMA are set."
+    exit 1
+  fi
+  
+  echo "Using existing DB_USER: $DB_USER and DB_SCHEMA: $DB_SCHEMA"
+  
+  # Construct the DB_URL with the existing user
+  export DB_URL=postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
+  
+  # Log the schema being used
+  echo "Using DB_SCHEMA: $DB_SCHEMA"
+  
+  # Start the squid services with the specified node options
+  echo "Starting squid services in resume mode..."
+  sqd run:marketplace --node-options=$NODE_OPTIONS
+  
+  exit 0
+fi
+
+# Regular mode - Generate a unique schema name and user credentials using a timestamp
 CURRENT_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 NEW_SCHEMA_NAME="marketplace_squid_${CURRENT_TIMESTAMP}"
 NEW_DB_USER="marketplace_squid_user_${CURRENT_TIMESTAMP}"
@@ -8,6 +34,7 @@ SQUID_READER_USER="marketplace_squid_api_reader"
 API_READER_USER="dapps_marketplace_user"
 MARKETPLACE_TRADES_MV_ROLE="mv_trades_owner"
 MARKETPLACE_SCHEMA="marketplace"
+
 # Check if required environment variables are set
 if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ]; then
   echo "Error: Required environment variables are not set."

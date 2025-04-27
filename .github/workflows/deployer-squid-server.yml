@@ -24,6 +24,19 @@ on:
         default: "latest"
         type: string
         description: "Docker tag (quay.io)"
+      resume-mode:
+        required: false
+        type: boolean
+        default: false
+        description: "Resume indexing with existing user (provide DB_USER and DB_SCHEMA below)"
+      db-user:
+        required: false
+        type: string
+        description: "Existing DB user for resume mode"
+      db-schema:
+        required: false
+        type: string
+        description: "Existing DB schema for resume mode"
 
 jobs:
   deployment:
@@ -39,3 +52,7 @@ jobs:
           serviceName: "marketplace-squid-server-${{ inputs.deployment-server }}"
           env: ${{ inputs.deployment-environment }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          envVariables: |
+            RESUME_MODE=${{ inputs.resume-mode }}
+            ${{ inputs.resume-mode == true && format('DB_USER={0}', inputs.db-user) || '' }}
+            ${{ inputs.resume-mode == true && format('DB_SCHEMA={0}', inputs.db-schema) || '' }}
