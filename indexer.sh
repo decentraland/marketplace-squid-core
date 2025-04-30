@@ -8,16 +8,17 @@ SQUID_READER_USER="marketplace_squid_api_reader"
 API_READER_USER="dapps_marketplace_user"
 MARKETPLACE_TRADES_MV_ROLE="mv_trades_owner"
 MARKETPLACE_SCHEMA="marketplace"
+
+# Get commit hash from environment variable
+COMMIT_HASH=${COMMIT_HASH:-local}
+echo "Commit Hash: $COMMIT_HASH"
+
 # Check if required environment variables are set
 if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ]; then
   echo "Error: Required environment variables are not set."
   echo "Ensure DB_USER, DB_NAME, DB_PASSWORD, DB_HOST, and DB_PORT are set."
   exit 1
 fi
-
-# Log the generated variables
-echo "Generated schema name: $NEW_SCHEMA_NAME"
-echo "Generated user: $NEW_DB_USER"
 
 # Set PGPASSWORD to handle password prompt
 export PGPASSWORD=$DB_PASSWORD
@@ -30,34 +31,56 @@ SERVICE_NAME=$(aws ecs describe-tasks \
 
 echo "Service Name: $SERVICE_NAME"
 
-# Connect to the database and create the new schema and user
-psql -v ON_ERROR_STOP=1 --username "$DB_USER" --dbname "$DB_NAME" --host "$DB_HOST" --port "$DB_PORT" <<-EOSQL
-  CREATE SCHEMA $NEW_SCHEMA_NAME;
-  CREATE USER $NEW_DB_USER WITH PASSWORD '$DB_PASSWORD';
-  GRANT ALL PRIVILEGES ON SCHEMA $NEW_SCHEMA_NAME TO $NEW_DB_USER;
-  GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $NEW_DB_USER;
-  ALTER USER $NEW_DB_USER SET search_path TO $NEW_SCHEMA_NAME;
-
-  -- Grant schema usage to reader users
-  GRANT USAGE ON SCHEMA $NEW_SCHEMA_NAME TO $API_READER_USER, $SQUID_READER_USER, $MARKETPLACE_TRADES_MV_ROLE;
-
-  -- Make squid_server_user able to grant permissions on objects in this schema
-  GRANT $NEW_DB_USER TO $DB_USER;
-
-  -- Set default privileges for tables created by NEW_DB_USER
-  ALTER DEFAULT PRIVILEGES FOR ROLE $NEW_DB_USER IN SCHEMA $NEW_SCHEMA_NAME
-    GRANT SELECT ON TABLES TO $API_READER_USER, $SQUID_READER_USER, $MARKETPLACE_TRADES_MV_ROLE;
-
-  -- Grant usage on marketplace schema
-  GRANT USAGE ON SCHEMA $MARKETPLACE_SCHEMA TO $NEW_DB_USER;
-
-  -- Add new user to mv_trades_owner
-  GRANT $MARKETPLACE_TRADES_MV_ROLE TO $NEW_DB_USER;    
-
-  -- Insert a new record into the indexers table
-  INSERT INTO public.indexers (service, schema, db_user, created_at)
-  VALUES ('$SERVICE_NAME', '$NEW_SCHEMA_NAME', '$NEW_DB_USER', NOW());
+# Check if an indexer with the same service name and commit hash already exists
+EXISTING_INDEXER=$(psql -t -A -v ON_ERROR_STOP=1 --username "$DB_USER" --dbname "$DB_NAME" --host "$DB_HOST" --port "$DB_PORT" <<-EOSQL
+  SELECT schema, db_user FROM public.indexers 
+  WHERE service = '$SERVICE_NAME' AND commit_hash = '$COMMIT_HASH'
+  ORDER BY created_at DESC LIMIT 1;
 EOSQL
+)
+
+if [ -n "$EXISTING_INDEXER" ]; then
+  # Existing indexer found, use its schema and user
+  echo "Found existing indexer for service $SERVICE_NAME with commit hash $COMMIT_HASH"
+  NEW_SCHEMA_NAME=$(echo $EXISTING_INDEXER | cut -d'|' -f1)
+  NEW_DB_USER=$(echo $EXISTING_INDEXER | cut -d'|' -f2)
+  echo "Resuming with existing schema: $NEW_SCHEMA_NAME"
+  echo "Resuming with existing user: $NEW_DB_USER"
+else
+  # No existing indexer found, create a new schema and user
+  echo "No existing indexer found for service $SERVICE_NAME with commit hash $COMMIT_HASH"
+  echo "Creating new schema: $NEW_SCHEMA_NAME"
+  echo "Creating new user: $NEW_DB_USER"
+
+  # Connect to the database and create the new schema and user
+  psql -v ON_ERROR_STOP=1 --username "$DB_USER" --dbname "$DB_NAME" --host "$DB_HOST" --port "$DB_PORT" <<-EOSQL
+    CREATE SCHEMA $NEW_SCHEMA_NAME;
+    CREATE USER $NEW_DB_USER WITH PASSWORD '$DB_PASSWORD';
+    GRANT ALL PRIVILEGES ON SCHEMA $NEW_SCHEMA_NAME TO $NEW_DB_USER;
+    GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $NEW_DB_USER;
+    ALTER USER $NEW_DB_USER SET search_path TO $NEW_SCHEMA_NAME;
+
+    -- Grant schema usage to reader users
+    GRANT USAGE ON SCHEMA $NEW_SCHEMA_NAME TO $API_READER_USER, $SQUID_READER_USER, $MARKETPLACE_TRADES_MV_ROLE;
+
+    -- Make squid_server_user able to grant permissions on objects in this schema
+    GRANT $NEW_DB_USER TO $DB_USER;
+
+    -- Set default privileges for tables created by NEW_DB_USER
+    ALTER DEFAULT PRIVILEGES FOR ROLE $NEW_DB_USER IN SCHEMA $NEW_SCHEMA_NAME
+      GRANT SELECT ON TABLES TO $API_READER_USER, $SQUID_READER_USER, $MARKETPLACE_TRADES_MV_ROLE;
+
+    -- Grant usage on marketplace schema
+    GRANT USAGE ON SCHEMA $MARKETPLACE_SCHEMA TO $NEW_DB_USER;
+
+    -- Add new user to mv_trades_owner
+    GRANT $MARKETPLACE_TRADES_MV_ROLE TO $NEW_DB_USER;    
+
+    -- Insert a new record into the indexers table
+    INSERT INTO public.indexers (service, schema, db_user, created_at, commit_hash)
+    VALUES ('$SERVICE_NAME', '$NEW_SCHEMA_NAME', '$NEW_DB_USER', NOW(), '$COMMIT_HASH');
+EOSQL
+fi
 
 # Unset PGPASSWORD
 unset PGPASSWORD
