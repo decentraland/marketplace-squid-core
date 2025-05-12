@@ -15,6 +15,7 @@ import {
   Item,
   ItemsDayData,
   Network,
+  Operation,
   Sale,
   SaleType,
 } from "../../model";
@@ -28,20 +29,50 @@ import {
   updateUniqueCollectorsSet,
 } from "./accountsDayData";
 
+const CREDIT_CONTRACTS = [
+  "0xa1691afad71b9a92d329f1a95c39d3077d8f2f5f", // old CreditsManager contract Amoy
+  "0x037566bc90f85e76587e1b07f9184585f09c1420", // new CreditsManager contract Amoy
+  "0x6a03991dfa9d661ef7ad3c6f88b31f16e5a282cf", // CreditsManager contract Mainnet
+  "0xe9f961e6ded4e1476bbee4faab886d63a2493eb9", // new CreditsManager contract Mainnet
+];
+
+function isCreditSale(buyer: string): boolean {
+  return CREDIT_CONTRACTS.includes(buyer);
+}
+
+export function isTransakOperation(buyer: string): boolean {
+  return [
+    "0xed038688ecf1193f8d9717eb3930f0bf0d745cb4", // Transak Polygon
+    "0xcb9bd5acd627e8fccf9eb8d4ba72aeb1cd8ff5ef", // Transak Multicall Polygon Amoy
+    "0x4a598b7ec77b1562ad0df7dc64a162695ce4c78a", // Transak Multicall Polygon Mainnet
+    "0xab88cd272863b197b48762ea283f24a13f6586dd", // Transak Multicall Ethereum Mainnet
+  ].includes(buyer);
+}
+
+export function isAxelarOperation(buyer: string): boolean {
+  return [
+    "0xea749fd6ba492dbc14c24fe8a3d08769229b896c", // Axelar Polygon & Ethereum old contract
+    "0xad6cea45f98444a922a2b4fe96b8c90f0862d2f4", // Axelar Polygon & Ethereum new contract
+  ].includes(buyer);
+}
+
 // check if the buyer in a sale was a third party provider (to pay with credit card, cross chain, etc)
 export function isThirdPartySale(buyer: string): boolean {
-  if (
-    buyer == "0xed038688ecf1193f8d9717eb3930f0bf0d745cb4" || // Transak Polygon
-    buyer == "0xcb9bd5acd627e8fccf9eb8d4ba72aeb1cd8ff5ef" || // Transak Multicall Polygon Amoy
-    buyer == "0x4a598b7ec77b1562ad0df7dc64a162695ce4c78a" || // Transak Multicall Polygon Mainnet
-    buyer == "0xab88cd272863b197b48762ea283f24a13f6586dd" || // Transak Multicall Ethereum Mainnet
-    buyer == "0xd84ac4716a082b1f7ecde9301aa91a7c4b62ecd7" || // Transak Multicall Ethereum Sepolia
-    buyer == "0xea749fd6ba492dbc14c24fe8a3d08769229b896c" || // Axelar Polygon & Ethereum old contract
-    buyer == "0xad6cea45f98444a922a2b4fe96b8c90f0862d2f4" // Axelar Polygon & Ethereum new contract
-  ) {
+  if (isTransakOperation(buyer) || isAxelarOperation(buyer)) {
     return true;
   }
   return false;
+}
+
+function getOperation(buyer: string): Operation {
+  if (isTransakOperation(buyer)) {
+    return Operation.fiat;
+  } else if (isAxelarOperation(buyer)) {
+    return Operation.cross_chain;
+  } else if (isCreditSale(buyer)) {
+    return Operation.credits;
+  }
+  return Operation.native;
 }
 
 export async function trackSale(
@@ -103,9 +134,14 @@ export async function trackSale(
   const saleId = `${BigInt(count.salesTotal).toString()}-${Network.POLYGON}`;
   const sale = new Sale({ id: saleId });
   sale.type = type;
-  sale.buyer = isThirdPartySale(buyer)
-    ? await getOwner(ctx, block, nft.contractAddress, nft.tokenId)
-    : buyer;
+  // real buyer is the buyer that is paying for the NFT
+  sale.realBuyer = buyer;
+  sale.operation = getOperation(buyer);
+  // buyer is the address that will own the NFT (beneficiary of the NFT). If it's a third party or credit sale, we need to get the owner of the NFT
+  sale.buyer =
+    isThirdPartySale(buyer) || isCreditSale(buyer)
+      ? await getOwner(ctx, block, nft.contractAddress, nft.tokenId)
+      : buyer;
   sale.seller = seller;
   sale.beneficiary = Buffer.from(beneficiary.slice(2), "hex");
   sale.price = price;
@@ -261,7 +297,6 @@ export async function trackSale(
     creatorAccount.primarySales += 1;
     creatorAccount.primarySalesEarned =
       creatorAccount.primarySalesEarned + (price - totalFees);
-    // creatorAccount.save();
   } else {
     // track secondary sale
     buildCountFromSecondarySale(counts, price);

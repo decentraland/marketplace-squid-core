@@ -1,5 +1,6 @@
 import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, Index as Index_, StringColumn as StringColumn_, BigIntColumn as BigIntColumn_, ManyToOne as ManyToOne_, BytesColumn as BytesColumn_} from "@subsquid/typeorm-store"
 import {SaleType} from "./_saleType"
+import {Operation} from "./_operation"
 import {NFT} from "./nft.model"
 import {Item} from "./item.model"
 import {Network} from "./_network"
@@ -19,6 +20,12 @@ export class Sale {
 
     @StringColumn_({nullable: false})
     buyer!: string
+
+    @StringColumn_({nullable: false})
+    realBuyer!: string
+
+    @Column_("varchar", {length: 11, nullable: false})
+    operation!: Operation
 
     @StringColumn_({nullable: false})
     seller!: string

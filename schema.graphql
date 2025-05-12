@@ -349,10 +349,19 @@ enum WearableBodyShape {
 
 # We only track sales from Decentraland's smart contracts
 
+enum Operation {
+  native
+  fiat
+  cross_chain
+  credits
+}
+
 type Sale @entity @index(fields: ["searchCategory", "network"]) {
   id: ID!
   type: SaleType!
   buyer: String!
+  realBuyer: String!
+  operation: Operation!
   seller: String!
   price: BigInt!
   nft: NFT!
@@ -366,8 +375,6 @@ type Sale @entity @index(fields: ["searchCategory", "network"]) {
 
   ## collections subgraph fields
 
-  #buyer: Bytes!
-  #seller: Bytes!
   beneficiary: Bytes
   feesCollectorCut: BigInt
   feesCollector: Bytes
