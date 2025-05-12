@@ -64,7 +64,7 @@ export function isThirdPartySale(buyer: string): boolean {
   return false;
 }
 
-function getOperation(buyer: string): Operation {
+export function getOperation(buyer: string): Operation {
   if (isTransakOperation(buyer)) {
     return Operation.fiat;
   } else if (isAxelarOperation(buyer)) {
