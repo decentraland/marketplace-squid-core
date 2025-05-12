@@ -12,6 +12,7 @@ import {
 import { buildCountFromSale } from "./count";
 import { getOrCreateAnalyticsDayData } from "../../common/modules/analytics";
 import { getOwner } from "../../common/utils/nft";
+import { getOperation } from "../../polygon/modules/analytics";
 import { Block, Context } from "../processor";
 
 export let BID_SALE_TYPE = "bid";
@@ -65,6 +66,8 @@ export async function trackSale(
   sale.seller = seller;
   sale.price = price;
   if (nft) {
+    sale.realBuyer = buyer;
+    sale.operation = getOperation(buyer);
     sale.buyer = isThirdPartySale(buyer)
       ? await getOwner(ctx, block, nft.contractAddress, nft.tokenId)
       : buyer;
