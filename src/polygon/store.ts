@@ -29,9 +29,10 @@ export const getStoredData = async (
     | "bidIds"
     | "collectionIds"
     | "itemIds"
+    | "itemDayDataIds"
   >
 ): Promise<PolygonStoredData> => {
-  const { accountIds, tokenIds, analyticsIds, bidIds, collectionIds, itemIds } =
+  const { accountIds, tokenIds, analyticsIds, bidIds, collectionIds, itemIds, itemDayDataIds } =
     ids;
 
   // grab ids from all nfts to query
@@ -75,7 +76,7 @@ export const getStoredData = async (
 
   const itemDayDatas = await ctx.store
     .findBy(ItemsDayData, {
-      id: In([...Array.from(analyticsIds.values())]),
+      id: In([...Array.from(itemDayDataIds.values())]),
     })
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
