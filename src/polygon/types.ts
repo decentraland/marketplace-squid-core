@@ -44,6 +44,7 @@ export type PolygonInMemoryState = {
   itemIds: Map<string, bigint[]>;
   accountIds: Set<string>;
   analyticsIds: Set<string>;
+  itemDayDataIds: Set<string>;
   bidIds: Set<string>;
   // events
   transferEvents: Map<

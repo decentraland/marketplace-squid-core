@@ -8,6 +8,7 @@ import {
   Network as ModelNetwork,
   Collection,
   Currency,
+  ItemsDayData,
 } from "../model";
 import * as CollectionFactoryABI from "./abi/CollectionFactory";
 import * as CollectionFactoryV3ABI from "./abi/CollectionFactoryV3";
@@ -154,6 +155,7 @@ processor.run(
       transfers,
       bidIds,
       analyticsIds,
+      itemDayDataIds,
       // events
       events,
       collectionFactoryEvents,
@@ -269,6 +271,11 @@ processor.run(
             accountIds.add(event.seller); // load sellers acount to update metrics
             accountIds.add(event.buyer); // load buyers acount to update metrics
             analyticsIds.add(analyticDayDataId);
+            // Add itemDayData ID placeholder for this NFT sale - will be resolved when we have NFT data
+            const dayID = BigInt(timestamp) / BigInt(86400);
+            const nftId = `${event.nftAddress}-${event.assetId}`;
+            const tempItemDayDataId = `${dayID.toString()}-nft-${nftId}`;
+            itemDayDataIds.add(tempItemDayDataId);
             events.push({
               topic,
               event,
@@ -358,6 +365,11 @@ processor.run(
               event._tokenId,
             ]);
             analyticsIds.add(analyticDayDataId);
+            // Add itemDayData ID placeholder for this NFT bid sale
+            const dayIDBid = BigInt(timestamp) / BigInt(86400);
+            const nftIdBid = `${event._tokenAddress}-${event._tokenId}`;
+            const tempItemDayDataIdBid = `${dayIDBid.toString()}-nft-${nftIdBid}`;
+            itemDayDataIds.add(tempItemDayDataIdBid);
             events.push({
               topic: ERC721BidABI.events.BidAccepted.topic,
               event,
@@ -494,6 +506,11 @@ processor.run(
                 event = CollectionV2ABI.events.Issue.decode(log);
                 accountIds.add(event._beneficiary.toLowerCase());
                 analyticsIds.add(analyticDayDataId);
+                // Add itemDayData ID for this item sale
+                const dayID = BigInt(timestamp) / BigInt(86400);
+                const itemId = `${log.address}-${event._itemId}`;
+                const itemDayDataId = `${dayID.toString()}-${itemId}`;
+                itemDayDataIds.add(itemDayDataId);
                 itemIds.set(log.address, [
                   ...(itemIds.get(log.address) || []),
                   event._itemId,
@@ -630,6 +647,19 @@ processor.run(
             accountIds.add(seller); // load sellers acount to update metrics
             accountIds.add(buyer); // load buyers acount to update metrics
             analyticsIds.add(analyticDayDataId);
+            // Add itemDayData ID for this trade
+            const dayIDTrade = BigInt(timestamp) / BigInt(86400);
+            if (itemId !== undefined) {
+              // Primary sale - we have the itemId directly
+              const itemIdStr = `${collectionAddress}-${itemId}`;
+              const itemDayDataIdTrade = `${dayIDTrade.toString()}-${itemIdStr}`;
+              itemDayDataIds.add(itemDayDataIdTrade);
+            } else if (tokenId) {
+              // Secondary sale - add placeholder to be resolved later
+              const nftIdTrade = `${collectionAddress}-${tokenId}`;
+              const tempItemDayDataIdTrade = `${dayIDTrade.toString()}-nft-${nftIdTrade}`;
+              itemDayDataIds.add(tempItemDayDataIdTrade);
+            }
 
             events.push({
               topic,
@@ -658,10 +688,39 @@ processor.run(
       analyticsIds,
       bidIds,
       itemIds,
+      itemDayDataIds,
     });
 
     const { counts, accounts, orders, bids, nfts, items, metadatas } =
       storedData;
+
+    // Resolve placeholder itemDayDataIds for secondary sales
+    const placeholderIds = [...itemDayDataIds].filter(id => id.includes('-nft-'));
+    for (const placeholderId of placeholderIds) {
+      // Extract dayID and nftId from placeholder: "dayID-nft-contractAddress-tokenId"
+      const [dayID, , ...nftIdParts] = placeholderId.split('-');
+      const nftId = nftIdParts.join('-');
+      
+      const nft = nfts.get(nftId);
+      if (nft?.item) {
+        // Remove placeholder and add correct ID
+        itemDayDataIds.delete(placeholderId);
+        const correctItemDayDataId = `${dayID}-${nft.item.id}`;
+        itemDayDataIds.add(correctItemDayDataId);
+      }
+    }
+
+    // Reload itemDayDatas with the corrected IDs
+    const additionalItemDayDatas = await ctx.store
+      .findBy(ItemsDayData, {
+        id: In([...Array.from(itemDayDataIds.values())]),
+      })
+      .then((q) => new Map(q.map((i) => [i.id, i])));
+    
+    // Merge with existing itemDayDatas
+    for (const [key, value] of additionalItemDayDatas.entries()) {
+      storedData.itemDayDatas.set(key, value);
+    }
 
     // Collection Factory Events
     for (const { block, event } of collectionFactoryEvents) {
