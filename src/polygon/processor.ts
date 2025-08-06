@@ -33,6 +33,9 @@ const GATEWAY = `https://v2.archive.subsquid.io/network/polygon-${
 }`;
 const RPC_ENDPOINT = process.env.RPC_ENDPOINT_POLYGON;
 
+const FINALITY_CONFIRMATION = parseInt(
+  process.env.FINALITY_CONFIRMATION_POLYGON || "500"
+);
 const collections = loadCollections();
 
 export const processor = new EvmBatchProcessor()
@@ -42,7 +45,7 @@ export const processor = new EvmBatchProcessor()
     url: assertNotNull(RPC_ENDPOINT),
     rateLimit: 10,
   })
-  .setFinalityConfirmation(75)
+  .setFinalityConfirmation(FINALITY_CONFIRMATION)
   .setFields({
     transaction: {
       input: true,
