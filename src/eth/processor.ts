@@ -28,6 +28,9 @@ const GATEWAY = `https://v2.archive.subsquid.io/network/ethereum-${
 }`; // see https://docs.subsquid.io/evm-indexing/supported-networks/
 const RPC_ENDPOINT = process.env.RPC_ENDPOINT_ETH;
 
+const FINALITY_CONFIRMATION = parseInt(
+  process.env.FINALITY_CONFIRMATION_ETH || "75"
+);
 export const processor = new EvmBatchProcessor()
   .setGateway(GATEWAY)
   .setPrometheusPort(parseInt(process.env.ETH_PROMETHEUS_PORT || "3000"))
@@ -35,7 +38,7 @@ export const processor = new EvmBatchProcessor()
     url: assertNotNull(RPC_ENDPOINT),
     rateLimit: 10,
   })
-  .setFinalityConfirmation(75)
+  .setFinalityConfirmation(FINALITY_CONFIRMATION)
   .setFields({
     log: {
       transactionHash: true,
