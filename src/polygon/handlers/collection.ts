@@ -83,6 +83,7 @@ export const handleCollectionCreation = async (
       updatedAt: timestamp,
       reviewedAt: timestamp,
       searchIsStoreMinter: false,
+      searchIsMarketplaceV3Minter: false,
       searchText: name.toLowerCase(),
       baseURI,
       chainId,
@@ -463,6 +464,7 @@ export async function handleAddItem(
   item.minters = [];
   item.managers = [];
   item.searchIsStoreMinter = false;
+  item.searchIsMarketplaceV3Minter = false;
 
   const timestamp = BigInt(block.timestamp / 1000);
   item.createdAt = timestamp;
