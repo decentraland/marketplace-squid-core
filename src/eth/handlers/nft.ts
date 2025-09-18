@@ -325,6 +325,7 @@ export async function handleAddItemV1(
     collection.updatedAt = timestamp; // Not going to be used
     collection.reviewedAt = timestamp; // Not going to be used
     collection.searchIsStoreMinter = false;
+    collection.searchIsMarketplaceV3Minter = false;
     collection.searchText = collection.name.toLowerCase();
     collection.isApproved = true;
 
@@ -373,6 +374,7 @@ export async function handleAddItemV1(
   item.updatedAt = timestamp; // Not used for collections v1
   item.reviewedAt = timestamp; // Not used for collections v1
   item.searchIsStoreMinter = false; // Not used for collections v1
+  item.searchIsMarketplaceV3Minter = false; // Not used for collections v1
   item.soldAt = null;
   item.sales = 0;
   item.volume = BigInt(0);
