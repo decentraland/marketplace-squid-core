@@ -121,6 +121,9 @@ export class Item {
     @BooleanColumn_({nullable: false})
     searchIsStoreMinter!: boolean
 
+    @BooleanColumn_({nullable: false})
+    searchIsMarketplaceV3Minter!: boolean
+
     @BooleanColumn_({nullable: true})
     searchIsWearableHead!: boolean | undefined | null
 

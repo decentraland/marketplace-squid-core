@@ -62,6 +62,9 @@ export class Collection {
     @BooleanColumn_({nullable: false})
     searchIsStoreMinter!: boolean
 
+    @BooleanColumn_({nullable: false})
+    searchIsMarketplaceV3Minter!: boolean
+
     @StringColumn_({nullable: false})
     searchText!: string
 
