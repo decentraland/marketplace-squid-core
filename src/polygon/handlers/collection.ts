@@ -109,6 +109,7 @@ export function handleSetGlobalMinter(
   const { collections, items } = storedData;
   const addresses = getAddresses(Network.MATIC);
   const storeAddress = addresses.CollectionStore;
+  const marketplaceV3Address = addresses.MarketplaceV3;
 
   const minterAddress = event._minter; //@TODO check this
   //   let minterAddress = event._minter.toHexString(); //@TODO check this
@@ -129,8 +130,15 @@ export function handleSetGlobalMinter(
     collection.minters = minters;
 
     // set flag on collection
-    if (minterAddress === storeAddress) {
-      collection.searchIsStoreMinter = true;
+    if (
+      minterAddress === storeAddress ||
+      minterAddress === marketplaceV3Address
+    ) {
+      if (minterAddress === storeAddress) {
+        collection.searchIsStoreMinter = true;
+      } else if (minterAddress === marketplaceV3Address) {
+        collection.searchIsMarketplaceV3Minter = true;
+      }
 
       if (!collection.firstListedAt) {
         collection.firstListedAt = BigInt(block.timestamp / 1000);
@@ -143,7 +151,11 @@ export function handleSetGlobalMinter(
         // let item = Item.load(itemId);
         const item = items.get(itemId);
         if (item) {
-          item.searchIsStoreMinter = true;
+          if (minterAddress === storeAddress) {
+            item.searchIsStoreMinter = true;
+          } else if (minterAddress === marketplaceV3Address) {
+            item.searchIsMarketplaceV3Minter = true;
+          }
 
           if (!item.firstListedAt) {
             item.firstListedAt = BigInt(block.timestamp / 1000);
@@ -163,8 +175,15 @@ export function handleSetGlobalMinter(
     }
 
     // unset flag on collection
-    if (minterAddress === storeAddress) {
-      collection.searchIsStoreMinter = false;
+    if (
+      minterAddress === storeAddress ||
+      minterAddress === marketplaceV3Address
+    ) {
+      if (minterAddress === storeAddress) {
+        collection.searchIsStoreMinter = false;
+      } else if (minterAddress === marketplaceV3Address) {
+        collection.searchIsMarketplaceV3Minter = false;
+      }
       // loop over all items and unset flag (only if store is not an item minter)
       const itemCount = collection.itemsCount;
       for (let i = 0; i < itemCount; i++) {
@@ -173,14 +192,18 @@ export function handleSetGlobalMinter(
         if (item) {
           // check if store is item minter
           let isStoreItemMinter = false;
+          let isMarketplaceV3ItemMinter = false;
           const itemMinters = item.minters;
           for (let j = 0; j < item.minters.length; j++) {
             if (storeAddress == itemMinters[i]) {
               isStoreItemMinter = true;
+            } else if (marketplaceV3Address == itemMinters[i]) {
+              isMarketplaceV3ItemMinter = true;
             }
           }
           // set flag only if store is item minter, otherwise unset it
           item.searchIsStoreMinter = isStoreItemMinter;
+          item.searchIsMarketplaceV3Minter = isMarketplaceV3ItemMinter;
         } else {
           console.log(`ERROR: Item not found: ${itemId}`);
         }
@@ -233,6 +256,7 @@ export function handleSetItemMinter(
   const { items, collections } = storedData;
   const addresses = getAddresses(Network.MATIC);
   const storeAddress = addresses.CollectionStore;
+  const marketplaceV3Address = addresses.MarketplaceV3;
   const minterAddress = event._minter;
   const itemId = event._itemId.toString();
   const id = getItemId(collectionAddress, itemId);
@@ -255,9 +279,14 @@ export function handleSetItemMinter(
       if (!item.firstListedAt) {
         item.firstListedAt = BigInt(block.timestamp / 1000);
       }
+    } else if (minterAddress === marketplaceV3Address) {
+      item.searchIsMarketplaceV3Minter = true;
+
+      if (!item.firstListedAt) {
+        item.firstListedAt = BigInt(block.timestamp / 1000);
+      }
     }
   } else {
-    // item.minters = removeItemMinter(item, minterAddress);
     item.minters = item.minters.filter((m) => m != minterAddress);
     // if minter is store address, unset flag, but only if store is not global minter
     const collection = collections.get(item.collection.id);
@@ -272,6 +301,12 @@ export function handleSetItemMinter(
       minterAddress == storeAddress
     ) {
       item.searchIsStoreMinter = false;
+    } else if (
+      collection != null &&
+      !collection.searchIsMarketplaceV3Minter &&
+      minterAddress == marketplaceV3Address
+    ) {
+      item.searchIsMarketplaceV3Minter = false;
     }
   }
 }
@@ -887,7 +922,7 @@ export function handleTransferOwnership(
   const timestamp = BigInt(block.timestamp / 1000);
   if (collection) {
     collection.owner = event.newOwner;
-    collection.updatedAt = timestamp
+    collection.updatedAt = timestamp;
   } else {
     console.log(
       `ERROR: Collection not found in handleTransferOwnership: ${collectionAddress}`

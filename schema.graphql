@@ -423,6 +423,7 @@ type Collection @entity {
 
   # Searcheable fields
   searchIsStoreMinter: Boolean!
+  searchIsMarketplaceV3Minter: Boolean!
   searchText: String!
 
   # new fields
@@ -474,6 +475,7 @@ type Item @entity @index(fields: ["collection", "blockchainId"]) {
   ## Collection fields
   searchIsCollectionApproved: Boolean
   searchIsStoreMinter: Boolean!
+  searchIsMarketplaceV3Minter: Boolean!
 
   ## Wearables search fields
   searchIsWearableHead: Boolean
