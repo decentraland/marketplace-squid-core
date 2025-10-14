@@ -7,6 +7,7 @@ import {WearableCategory} from "./_wearableCategory"
 import {WearableBodyShape} from "./_wearableBodyShape"
 import {EmoteCategory} from "./_emoteCategory"
 import {Network} from "./_network"
+import { EmoteOutcomeType } from "./_emoteOutcomeType"
 
 @Index_(["collection", "blockchainId"], {unique: false})
 @Entity_()
@@ -156,6 +157,9 @@ export class Item {
 
     @BooleanColumn_({nullable: true})
     searchEmoteHasGeometry!: boolean | undefined | null
+
+    @Column_("varchar", {length: 16, nullable: true})
+    searchEmoteOutcomeType!: EmoteOutcomeType | undefined | null
 
     @StringColumn_({array: true, nullable: false})
     uniqueCollectors!: (string)[]

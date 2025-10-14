@@ -6,6 +6,7 @@ import {
   NFT,
   WearableBodyShape,
   WearableRarity,
+  EmoteOutcomeType,
 } from "../../../../model";
 import { isValidBodyShape } from "../wearable";
 import {
@@ -18,6 +19,7 @@ import {
   REACTIONS,
   STUNT,
 } from "./categories";
+import { mapOutcomeToString, OUTCOMES } from "./outcomes";
 
 /**
  * @dev The item's rawMetadata for emotes should follow: version:item_type:name:description:category:bodyshapes:play_mode
@@ -30,7 +32,7 @@ export function buildEmoteItem(
   const id = item.id;
   const data = item.rawMetadata.split(":");
   const dataHasValidLength =
-    data.length == 6 || data.length == 7 || data.length == 8;
+    data.length == 6 || data.length == 7 || data.length == 8 || data.length == 9;
   if (dataHasValidLength && isValidBodyShape(data[5].split(","))) {
     let emote = emotes.get(id);
 
@@ -56,12 +58,25 @@ export function buildEmoteItem(
         : false; // Fallback old emotes as not loopable
     emote.hasGeometry = data.length >= 8 && data[7].includes("g");
     emote.hasSound = data.length >= 8 && data[7].includes("s");
+    emote.outcomeType = handleEmoteOutcomeType(data) as EmoteOutcomeType
     // emote.save();
 
     return emote;
   }
 
   return null;
+}
+
+const handleEmoteOutcomeType = (data: string[]): string | null => {
+  if (data.length >= 8 && OUTCOMES.includes(data[7])) {
+    return mapOutcomeToString(data[7])
+  }
+
+  if (data.length >= 9 && OUTCOMES.includes(data[8])) {
+    return mapOutcomeToString(data[8])
+  }
+
+  return null
 }
 
 function isValidEmoteCategory(category: string): boolean {
@@ -113,6 +128,7 @@ export function setItemEmoteSearchFields(
         item.searchEmoteRarity = emote.rarity;
         item.searchEmoteHasSound = emote.hasSound;
         item.searchEmoteHasGeometry = emote.hasGeometry;
+        item.searchEmoteOutcomeType = emote.outcomeType;
       }
       item.searchItemType = item.itemType;
     } else {
