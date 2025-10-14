@@ -41,5 +41,5 @@ export class Emote {
     hasGeometry!: boolean | undefined | null
 
     @Column_("varchar", {length: 16, nullable: true})
-    outcomeType!: EmoteOutcomeType
+    outcomeType!: EmoteOutcomeType | undefined | null
 }
