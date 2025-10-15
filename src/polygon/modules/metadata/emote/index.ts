@@ -56,8 +56,12 @@ export function buildEmoteItem(
       data.length >= 7 && isValidLoopValue(data[6]) && data[6] == "1"
         ? true
         : false; // Fallback old emotes as not loopable
-    emote.hasGeometry = data.length >= 8 && data[7].includes("g");
-    emote.hasSound = data.length >= 8 && data[7].includes("s");
+    // data[7] can contain properties (g, s, gs) OR outcome type (so, mo, ro)
+    // If length is 9: data[7] = properties, data[8] = outcome
+    // If length is 8: data[7] = properties OR outcome (but not both)
+    const isOutcomeType = data.length >= 8 && OUTCOMES.includes(data[7])
+    emote.hasGeometry = data.length >= 8 && !isOutcomeType && data[7].includes("g")
+    emote.hasSound = data.length >= 8 && !isOutcomeType && data[7].includes("s")
     emote.outcomeType = handleEmoteOutcomeType(data)
     // emote.save();
 
