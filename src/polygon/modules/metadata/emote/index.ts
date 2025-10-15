@@ -58,7 +58,7 @@ export function buildEmoteItem(
         : false; // Fallback old emotes as not loopable
     emote.hasGeometry = data.length >= 8 && data[7].includes("g");
     emote.hasSound = data.length >= 8 && data[7].includes("s");
-    emote.outcomeType = handleEmoteOutcomeType(data) as EmoteOutcomeType
+    emote.outcomeType = handleEmoteOutcomeType(data)
     // emote.save();
 
     return emote;
@@ -67,13 +67,13 @@ export function buildEmoteItem(
   return null;
 }
 
-const handleEmoteOutcomeType = (data: string[]): string | null => {
+const handleEmoteOutcomeType = (data: string[]): EmoteOutcomeType | null => {
   if (data.length >= 8 && OUTCOMES.includes(data[7])) {
-    return mapOutcomeToString(data[7])
+    return mapOutcomeToString(data[7]) as EmoteOutcomeType
   }
 
   if (data.length >= 9 && OUTCOMES.includes(data[8])) {
-    return mapOutcomeToString(data[8])
+    return mapOutcomeToString(data[8]) as EmoteOutcomeType
   }
 
   return null
