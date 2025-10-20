@@ -2,6 +2,7 @@ import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, S
 import {EmoteCategory} from "./_emoteCategory"
 import {WearableRarity} from "./_wearableRarity"
 import {WearableBodyShape} from "./_wearableBodyShape"
+import {EmoteOutcomeType} from "./_emoteOutcomeType"
 
 @Entity_()
 export class Emote {
@@ -38,4 +39,7 @@ export class Emote {
 
     @BooleanColumn_({nullable: true})
     hasGeometry!: boolean | undefined | null
+
+    @Column_("varchar", {length: 16, nullable: true})
+    outcomeType!: EmoteOutcomeType | undefined | null
 }

@@ -491,6 +491,7 @@ type Item @entity @index(fields: ["collection", "blockchainId"]) {
   searchEmoteBodyShapes: [WearableBodyShape!]
   searchEmoteHasSound: Boolean
   searchEmoteHasGeometry: Boolean
+  searchEmoteOutcomeType: EmoteOutcomeType
 
   ## Unique collectors
   uniqueCollectors: [String!]!
@@ -526,6 +527,7 @@ type Emote @entity {
   bodyShapes: [WearableBodyShape!]
   hasSound: Boolean
   hasGeometry: Boolean
+  outcomeType: EmoteOutcomeType
 }
 
 enum EmoteCategory {
@@ -537,6 +539,12 @@ enum EmoteCategory {
   reactions
   horror
   miscellaneous
+}
+
+enum EmoteOutcomeType @entity {
+  simple_outcome
+  multiple_outcome
+  random_outcome
 }
 
 type Rarity @entity {
