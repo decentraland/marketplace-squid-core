@@ -541,7 +541,7 @@ enum EmoteCategory {
   miscellaneous
 }
 
-enum EmoteOutcomeType @entity {
+enum EmoteOutcomeType {
   simple_outcome
   multiple_outcome
   random_outcome
