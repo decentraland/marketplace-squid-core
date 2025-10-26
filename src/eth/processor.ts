@@ -108,6 +108,11 @@ export const processor = new EvmBatchProcessor()
     transaction: true,
     address: [addresses.MarketplaceV3],
     topic0: [MarketplaceV3.events.Traded.topic],
+  })
+  .addLog({
+    transaction: true,
+    address: [addresses.MarketplaceV3_V2],
+    topic0: [MarketplaceV3.events.Traded.topic],
   });
 
 export type Fields = EvmBatchProcessorFields<typeof processor>;
