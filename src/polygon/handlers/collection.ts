@@ -111,7 +111,7 @@ export function handleSetGlobalMinter(
   const addresses = getAddresses(Network.MATIC);
   const storeAddress = addresses.CollectionStore;
   const marketplaceV3Address = addresses.MarketplaceV3;
-
+  const marketplaceV3_V2Address = addresses.MarketplaceV3_V2;
   const minterAddress = event._minter; //@TODO check this
   //   let minterAddress = event._minter.toHexString(); //@TODO check this
 
@@ -133,11 +133,15 @@ export function handleSetGlobalMinter(
     // set flag on collection
     if (
       minterAddress === storeAddress ||
-      minterAddress === marketplaceV3Address
+      minterAddress === marketplaceV3Address ||
+      minterAddress === marketplaceV3_V2Address
     ) {
       if (minterAddress === storeAddress) {
         collection.searchIsStoreMinter = true;
-      } else if (minterAddress === marketplaceV3Address) {
+      } else if (
+        minterAddress === marketplaceV3Address ||
+        minterAddress === marketplaceV3_V2Address
+      ) {
         collection.searchIsMarketplaceV3Minter = true;
       }
 
@@ -154,7 +158,10 @@ export function handleSetGlobalMinter(
         if (item) {
           if (minterAddress === storeAddress) {
             item.searchIsStoreMinter = true;
-          } else if (minterAddress === marketplaceV3Address) {
+          } else if (
+            minterAddress === marketplaceV3Address ||
+            minterAddress === marketplaceV3_V2Address
+          ) {
             item.searchIsMarketplaceV3Minter = true;
           }
 
@@ -178,11 +185,15 @@ export function handleSetGlobalMinter(
     // unset flag on collection
     if (
       minterAddress === storeAddress ||
-      minterAddress === marketplaceV3Address
+      minterAddress === marketplaceV3Address ||
+      minterAddress === marketplaceV3_V2Address
     ) {
       if (minterAddress === storeAddress) {
         collection.searchIsStoreMinter = false;
-      } else if (minterAddress === marketplaceV3Address) {
+      } else if (
+        minterAddress === marketplaceV3Address ||
+        minterAddress === marketplaceV3_V2Address
+      ) {
         collection.searchIsMarketplaceV3Minter = false;
       }
       // loop over all items and unset flag (only if store is not an item minter)
@@ -198,7 +209,10 @@ export function handleSetGlobalMinter(
           for (let j = 0; j < item.minters.length; j++) {
             if (storeAddress == itemMinters[i]) {
               isStoreItemMinter = true;
-            } else if (marketplaceV3Address == itemMinters[i]) {
+            } else if (
+              marketplaceV3Address == itemMinters[i] ||
+              marketplaceV3_V2Address == itemMinters[i]
+            ) {
               isMarketplaceV3ItemMinter = true;
             }
           }
