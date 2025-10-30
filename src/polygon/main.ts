@@ -124,6 +124,7 @@ processor.run(
           log.address === addresses.Rarity ||
           log.address === addresses.CollectionManager ||
           log.address === addresses.MarketplaceV3 ||
+          log.address === addresses.MarketplaceV3_V2 ||
           preloadedCollections.includes(log.address) ||
           collectionIdsNotIncludedInPreloaded.has(log.address)
       )
@@ -695,12 +696,14 @@ processor.run(
       storedData;
 
     // Resolve placeholder itemDayDataIds for secondary sales
-    const placeholderIds = [...itemDayDataIds].filter(id => id.includes('-nft-'));
+    const placeholderIds = [...itemDayDataIds].filter((id) =>
+      id.includes("-nft-")
+    );
     for (const placeholderId of placeholderIds) {
       // Extract dayID and nftId from placeholder: "dayID-nft-contractAddress-tokenId"
-      const [dayID, , ...nftIdParts] = placeholderId.split('-');
-      const nftId = nftIdParts.join('-');
-      
+      const [dayID, , ...nftIdParts] = placeholderId.split("-");
+      const nftId = nftIdParts.join("-");
+
       const nft = nfts.get(nftId);
       if (nft?.item) {
         // Remove placeholder and add correct ID
@@ -716,7 +719,7 @@ processor.run(
         id: In([...Array.from(itemDayDataIds.values())]),
       })
       .then((q) => new Map(q.map((i) => [i.id, i])));
-    
+
     // Merge with existing itemDayDatas
     for (const [key, value] of additionalItemDayDatas.entries()) {
       storedData.itemDayDatas.set(key, value);
@@ -828,7 +831,9 @@ processor.run(
           }
           if (
             (event as CollectionV2ABI.IssueEventArgs)._caller ===
-            addresses.MarketplaceV3
+              addresses.MarketplaceV3 ||
+            (event as CollectionV2ABI.IssueEventArgs)._caller ===
+              addresses.MarketplaceV3_V2
           ) {
             break;
           }
