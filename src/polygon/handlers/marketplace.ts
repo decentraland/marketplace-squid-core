@@ -327,7 +327,7 @@ export async function handleTraded(
     if (!logFromTraded || !logFromTraded.address) {
       console.log("ERROR: logFromTraded not found");
     } else if (
-      logFromTraded.address !== addresses.MarketplaceV3 ||
+      logFromTraded.address !== addresses.MarketplaceV3 &&
       logFromTraded.address !== addresses.MarketplaceV3_V2
     ) {
       console.log("ERROR: logFromTraded is not the marketplace v3 or v3 v2");
