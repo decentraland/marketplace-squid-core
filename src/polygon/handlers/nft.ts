@@ -112,7 +112,8 @@ export async function handleMintNFT(
   const addresses = getAddresses(Network.MATIC);
   const isStoreMinter =
     minterAddress === addresses.CollectionStore ||
-    minterAddress === addresses.MarketplaceV3;
+    minterAddress === addresses.MarketplaceV3 ||
+    minterAddress === addresses.MarketplaceV3_V2;
 
   const mint = new Mint({ id: nftId, network: NetworkModel.POLYGON });
   mint.nft = nft;
