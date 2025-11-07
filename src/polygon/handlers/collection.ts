@@ -272,6 +272,7 @@ export function handleSetItemMinter(
   const addresses = getAddresses(Network.MATIC);
   const storeAddress = addresses.CollectionStore;
   const marketplaceV3Address = addresses.MarketplaceV3;
+  const marketplaceV3_V2Address = addresses.MarketplaceV3_V2;
   const minterAddress = event._minter;
   const itemId = event._itemId.toString();
   const id = getItemId(collectionAddress, itemId);
@@ -294,7 +295,10 @@ export function handleSetItemMinter(
       if (!item.firstListedAt) {
         item.firstListedAt = BigInt(block.timestamp / 1000);
       }
-    } else if (minterAddress === marketplaceV3Address) {
+    } else if (
+      minterAddress === marketplaceV3Address ||
+      minterAddress === marketplaceV3_V2Address
+    ) {
       item.searchIsMarketplaceV3Minter = true;
 
       if (!item.firstListedAt) {
@@ -319,7 +323,8 @@ export function handleSetItemMinter(
     } else if (
       collection != null &&
       !collection.searchIsMarketplaceV3Minter &&
-      minterAddress == marketplaceV3Address
+      (minterAddress == marketplaceV3Address ||
+        minterAddress == marketplaceV3_V2Address)
     ) {
       item.searchIsMarketplaceV3Minter = false;
     }

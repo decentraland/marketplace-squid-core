@@ -319,13 +319,27 @@ export async function handleTraded(
     );
     const item = await collectionContract.items(itemId);
     const tokenId = encodeTokenId(Number(itemId), Number(item.totalSupply));
+
+    const logFromTraded = block.logs.find(
+      (log) => log.topics[0] === MarketplaceV3ABI.events.Traded.topic
+    );
+
+    if (!logFromTraded || !logFromTraded.address) {
+      console.log("ERROR: logFromTraded not found");
+    } else if (
+      logFromTraded.address !== addresses.MarketplaceV3 &&
+      logFromTraded.address !== addresses.MarketplaceV3_V2
+    ) {
+      console.log("ERROR: logFromTraded is not the marketplace v3 or v3 v2");
+    }
+
     // simulates an issue event to re-use all the logic inside the `handleIssue` function
     const issueEvent = {
       _beneficiary:
         tradeType === TradeType.Order
           ? event._trade.sent[0].beneficiary
           : event._trade.received[0].beneficiary,
-      _caller: addresses.MarketplaceV3,
+      _caller: logFromTraded?.address || "",
       _itemId: itemId,
       _tokenId: tokenId,
       _issuedId: item.totalSupply,
