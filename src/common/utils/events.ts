@@ -1,54 +1,58 @@
 import { Store } from '@subsquid/typeorm-store'
 import { TransferReceivedEvent, Events } from '@dcl/schemas'
+import { TransferEventArgs } from '../../polygon/abi/CollectionV2'
 import { EntityManager } from 'typeorm'
-import { Category, NFT } from '../../model'
+import { NFT } from '../../model'
 import eventPublisher from './event_publisher'
 
 export async function getLastNotified(store: Store): Promise<bigint | null> {
   const em = (store as unknown as { em: () => EntityManager }).em()
-  const lastNotified = (await em.query("SELECT last_notified FROM public.squids WHERE name = 'marketplace'"))[0].last_notified
-  return lastNotified && BigInt(lastNotified)
+  const result = await em.query(
+    "SELECT last_notified FROM public.squids WHERE name = $1",
+    ['marketplace']
+  )
+  if (!result || result.length === 0) {
+    return null
+  }
+  const lastNotified = result[0]?.last_notified
+  return lastNotified ? BigInt(lastNotified) : null
 }
 
 export async function setLastNotified(store: Store, timestamp: bigint) {
   const em = (store as unknown as { em: () => EntityManager }).em()
-  await em.query(`UPDATE public.squids SET last_notified = ${timestamp} WHERE name = 'marketplace'`)
+  await em.query(
+    "UPDATE public.squids SET last_notified = $1 WHERE name = $2",
+    [timestamp.toString(), 'marketplace']
+  )
 }
 
-export async function sendEvents(store: Store, modifiedNFTs: NFT[], timestamp: bigint) {
+export async function sendTransferEvent(store: Store, nft: NFT, transferEvent: TransferEventArgs) {
   try {
     const lastNotified = await getLastNotified(store)
-    const events = (
-      await Promise.all(
-        modifiedNFTs
-          .filter(nft => !lastNotified || nft.updatedAt > lastNotified)
-          .map(async nft => {
-            const event: TransferReceivedEvent = {
-              type: Events.Type.BLOCKCHAIN,
-              subType: Events.SubType.Blockchain.TRANSFER_RECEIVED,
-              key: nft.id,
-              timestamp: Number(nft.updatedAt.toString()),
-              metadata: {
-                senderAddress: nft.ownerAddress ?? undefined,
-                receiverAddress: nft.ownerAddress ?? undefined,
-                rarity:
-                  nft.category === Category.wearable
-                    ? nft.searchWearableRarity ?? undefined
-                    : nft.searchEmoteRarity ?? undefined,
-                image: nft.image ?? undefined
-              }
-            }
-            return event
-          })
-      )
-    )
 
-    await Promise.all(events.map(event => eventPublisher.publishMessage(event)))
+    // Only send if there's no lastNotified timestamp or if the NFT was updated after the last notification
+    if (lastNotified && nft.updatedAt <= lastNotified) {
+      console.log('Not sending transfer event for NFT', nft.id, 'because it was not updated since the last notified timestamp')
+      return
+    }
+
+    const event: TransferReceivedEvent = {
+      type: Events.Type.BLOCKCHAIN,
+      subType: Events.SubType.Blockchain.TRANSFER_RECEIVED,
+      key: nft.id,
+      timestamp: Number(nft.updatedAt.toString()),
+      metadata: {
+        senderAddress: transferEvent.from,
+        receiverAddress: transferEvent.to,
+        tokenUri: nft.tokenURI ?? undefined,
+      }
+    }
+    await eventPublisher.publishMessage(event)
+    
+    // Update lastNotified timestamp after successfully sending the event
+    await setLastNotified(store, nft.updatedAt)
   } catch (e) {
-    console.log('Error in sendEvents:', e)
-    console.log(
-      'Could not send events for NFTs with id',
-      modifiedNFTs.map(nft => nft.id)
-    )
+    console.log('Error in sendTransferEvent:', e)
+    console.log('Could not send transfer event for NFT', nft.id)
   }
 }

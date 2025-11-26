@@ -951,15 +951,16 @@ export function handleTransferOwnership(
   }
 }
 
-export function handleTransfer(
+export async function handleTransfer(
+  ctx: Context,
   collectionAddress: string,
   event: CollectionV2ABI.TransferEventArgs,
   block: Block,
   storedData: PolygonStoredData
-): void {
+): Promise<void> {
   // Do not compute mints
   if (!isMint(event.from)) {
-    handleTransferNFT(collectionAddress, event, block, storedData);
+    await handleTransferNFT(ctx, collectionAddress, event, block, storedData);
   } else {
     // console.log(`transfer found but not mint, it was from: ${event.from}`);
   }

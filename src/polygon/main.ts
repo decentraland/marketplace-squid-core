@@ -886,12 +886,19 @@ processor.run(
           );
           break;
         case CollectionV2ABI.events.Transfer.topic:
-          handleTransfer(
-            log.address,
-            event as CollectionV2ABI.TransferEventArgs,
-            block.header,
-            storedData
-          );
+          try {
+            await handleTransfer(
+              ctx,
+              log.address,
+              event as CollectionV2ABI.TransferEventArgs,
+              block.header,
+              storedData
+            );
+          } catch (e) {
+            console.log('Error in handleTransfer:', e);
+            console.log('Transfer event failed for NFT:', log.address, event);
+            // Continue processing other events even if this one fails
+          }
           break;
 
         case MarketplaceABI.events.OrderCreated.topic: {

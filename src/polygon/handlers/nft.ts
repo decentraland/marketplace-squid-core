@@ -29,6 +29,7 @@ import { PolygonInMemoryState, PolygonStoredData } from "../types";
 import { Transaction } from "@subsquid/evm-processor";
 import { trackSale } from "../modules/analytics";
 import { StoreContractData } from "../state";
+import { sendTransferEvent } from "../../common/utils/events";
 
 /**
  * @notice mint an NFT by a collection v2 issue event
@@ -143,7 +144,7 @@ export async function handleMintNFT(
   const price =
     (minterAddress === addresses.MarketplaceV3 ||
       minterAddress === addresses.MarketplaceV3_V2) &&
-    tradedEvent
+      tradedEvent
       ? tradedEvent._trade.received[0].value
       : item.price;
 
@@ -181,12 +182,13 @@ export async function handleMintNFT(
   mints.set(mint.id, mint);
 }
 
-export function handleTransferNFT(
+export async function handleTransferNFT(
+  ctx: Context,
   collectionAddress: string,
   event: TransferEventArgs,
   block: Block,
   storedData: PolygonStoredData
-): void {
+): Promise<void> {
   const { nfts, orders } = storedData;
   if (event.tokenId.toString() === "") {
     return;
@@ -222,6 +224,7 @@ export function handleTransferNFT(
         : OrderStatus.transferred;
       if (order.status === OrderStatus.transferred) {
         nft.searchOrderStatus = OrderStatus.transferred;
+        await sendTransferEvent(ctx.store, nft, event);
       } else {
         nft.searchOrderStatus = OrderStatus.open;
       }
