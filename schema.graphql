@@ -430,6 +430,13 @@ type Collection @entity {
   baseURI: String!
   chainId: BigInt!
 
+  # Credits fields
+  usedCredits: Boolean!
+  creditValue: BigInt
+  
+  # Transaction hash
+  txHash: String!
+
   network: Network!
 }
 

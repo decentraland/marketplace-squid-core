@@ -35,7 +35,10 @@ export const handleCollectionCreation = async (
   ctx: Context,
   block: Block,
   address: string,
-  storedData: PolygonStoredData
+  storedData: PolygonStoredData,
+  usedCredits: boolean = false,
+  creditValue?: bigint,
+  txHash?: string
 ) => {
   const { collections, counts } = storedData;
   const collectionContract = new CollectionV2ABI.Contract(ctx, block, address);
@@ -87,6 +90,9 @@ export const handleCollectionCreation = async (
       searchText: name.toLowerCase(),
       baseURI,
       chainId,
+      usedCredits,
+      creditValue,
+      txHash: txHash || "",
       network: ModelNetwork.POLYGON,
     })
   );
