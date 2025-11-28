@@ -6,8 +6,8 @@ import {NFT} from "./nft.model"
 import {WearableCategory} from "./_wearableCategory"
 import {WearableBodyShape} from "./_wearableBodyShape"
 import {EmoteCategory} from "./_emoteCategory"
+import {EmoteOutcomeType} from "./_emoteOutcomeType"
 import {Network} from "./_network"
-import { EmoteOutcomeType } from "./_emoteOutcomeType"
 
 @Index_(["collection", "blockchainId"], {unique: false})
 @Entity_()

@@ -19,3 +19,6 @@ export const MarketplaceV3 = "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d";
 export const MarketplaceV3_V2 = "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7";
 export const MANA = "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0";
 export const TRANSAK_TOKEN = "0x0c86a754a29714c4fe9c6f1359fa7099ed174c0b";
+
+// Credits Manager Address
+export const CreditsManager = ["0x8052a560e6e6ac86eeb7e711a4497f639b322fb3"];

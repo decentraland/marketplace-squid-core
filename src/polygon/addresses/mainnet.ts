@@ -18,3 +18,9 @@ export const CollectionManager = "0x9d32aac179153a991e832550d9f96441ea27763a";
 export const MarketplaceV3 = "0x540fb08edb56aae562864b390542c97f562825ba";
 export const MarketplaceV3_V2 = "0xa40b1d129b8906888720686f3a01921ddf37716f";
 export const MANA = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+
+// Credits Manager Addresses (multiple deployments)
+export const CreditsManager = [
+  "0xe9f961e6ded4e1476bbee4faab886d63a2493eb9",
+  "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+];
