@@ -36,6 +36,7 @@ export type EthereumInMemoryState = {
       | dclRegistrarABI.NameRegisteredEventArgs
       | DCLControllerV2Abi.NameBoughtEventArgs;
     block: BlockData;
+    log: Log & { transactionHash: string };
   }[];
   markteplaceEvents: {
     topic: string;

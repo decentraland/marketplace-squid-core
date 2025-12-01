@@ -33,6 +33,10 @@ export class ENS {
     @BigIntColumn_({nullable: true})
     createdAt!: bigint | undefined | null
 
+    @Index_()
+    @StringColumn_({nullable: true})
+    orderHash!: string | undefined | null
+
     @OneToOne_(() => NFT, e => e.ens)
     nft!: NFT | undefined | null
 }

@@ -9,6 +9,7 @@ import {
   Collection,
   Currency,
   ItemsDayData,
+  SquidRouterOrder,
 } from "../model";
 import * as CollectionFactoryABI from "./abi/CollectionFactory";
 import * as CollectionFactoryV3ABI from "./abi/CollectionFactoryV3";
@@ -22,6 +23,7 @@ import * as ERC721BidABI from "./abi/ERC721Bid";
 import * as CollectionStoreABI from "./abi/CollectionStore";
 import * as CollectionManagerABI from "./abi/CollectionManager";
 import * as CreditsManagerABI from "./abi/CreditsManager";
+import * as SpokeABI from "../abi/Spoke";
 import { getAddresses } from "../common/utils/addresses";
 import {
   encodeTokenId,
@@ -149,6 +151,7 @@ processor.run(
       sales,
       curations,
       mints,
+      squidRouterOrders,
       // ids
       itemIds,
       collectionIds,
@@ -210,9 +213,14 @@ processor.run(
             // Check if there's a CreditUsed event in the same transaction
             let usedCredits = false;
             let creditValue: bigint | undefined = undefined;
+            let orderHash: string | undefined = undefined;
 
-            // Search for CreditUsed event in the same transaction
+            // Collect all credit events and look for OrderCreated
+            const creditEvents: { creditId: string; value: bigint }[] = [];
+
+            // Search for CreditUsed events and OrderCreated in the same transaction
             for (let txLog of block.logs) {
+              // Check for CreditUsed events
               if (
                 txLog.transactionIndex === log.transactionIndex &&
                 txLog.topics[0] === CreditsManagerABI.events.CreditUsed.topic &&
@@ -220,16 +228,60 @@ processor.run(
                   a.toLowerCase()
                 ).includes(txLog.address.toLowerCase())
               ) {
-                // Decode the CreditUsed event to get the _value
+                // Decode the CreditUsed event
                 const creditEvent =
                   CreditsManagerABI.events.CreditUsed.decode(txLog);
                 usedCredits = true;
-                creditValue = creditEvent._value;
-                ctx.log.info(
-                  `Credits detected for collection ${event._address}: ${creditValue} wei`
-                );
-                break;
+
+                // Convert creditId (bytes32) to string
+                const creditId = creditEvent._creditId;
+                creditEvents.push({
+                  creditId,
+                  value: creditEvent._value,
+                });
+
+                // Sum up total credit value
+                if (creditValue === undefined) {
+                  creditValue = creditEvent._value;
+                } else {
+                  creditValue = creditValue + creditEvent._value;
+                }
               }
+
+              // Check for OrderCreated from Spoke
+              if (
+                txLog.transactionIndex === log.transactionIndex &&
+                txLog.topics[0] === SpokeABI.events.OrderCreated.topic &&
+                txLog.address.toLowerCase() === addresses.Spoke?.toLowerCase()
+              ) {
+                const orderCreatedEvent =
+                  SpokeABI.events.OrderCreated.decode(txLog);
+                orderHash = orderCreatedEvent.orderHash;
+              }
+            }
+
+            // If credits were used and we have an orderHash, create SquidRouterOrder
+            if (usedCredits && orderHash && creditEvents.length > 0) {
+              const squidRouterOrder = new SquidRouterOrder({
+                id: orderHash,
+                orderHash,
+                creditIds: creditEvents.map((c) => c.creditId),
+                totalCreditsUsed: creditValue || BigInt(0),
+                txHash: log.transactionHash,
+                blockNumber: BigInt(block.header.height),
+                timestamp: BigInt(block.header.timestamp / 1000),
+                network: ModelNetwork.POLYGON,
+              });
+
+              squidRouterOrders.set(orderHash, squidRouterOrder);
+
+              ctx.log.info(
+                `SquidRouterOrder created for collection ${event._address}: orderHash ${orderHash}, ${creditEvents.length} credits used, total value ${creditValue} wei`
+              );
+            } else if (usedCredits) {
+              ctx.log.info(
+                `Credits detected for collection ${event._address}: ${creditValue} wei (no Squid Router order)`
+              );
             }
 
             collectionFactoryEvents.push({
@@ -1058,6 +1110,7 @@ processor.run(
     await ctx.store.insert([...mints.values()]);
     await ctx.store.insert([...transfers.values()]);
     await ctx.store.insert([...curations.values()]);
+    await ctx.store.insert([...squidRouterOrders.values()]);
     // console.log('accounts polygon: ', accounts);
     ctx.log.info(
       `Batch from block: ${ctx.blocks[0].header.height} to ${
@@ -1070,7 +1123,9 @@ processor.run(
         bids.size
       }, sales: ${sales.size}, mints: ${mints.size}, transfers: ${
         transfers.size
-      }, curations: ${curations.size}`
+      }, curations: ${curations.size}, squidRouterOrders: ${
+        squidRouterOrders.size
+      }`
     );
     console.log("bytes read until now: ", bytesRead);
   }

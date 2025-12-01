@@ -21,7 +21,8 @@ export function handleNameRegistered(
   event: NameRegisteredEventArgs,
   ensMap: Map<string, ENS>,
   nfts: Map<string, NFT>,
-  accounts: Map<string, Account>
+  accounts: Map<string, Account>,
+  orderHash?: string
 ): void {
   const { _labelHash, _caller, _subdomain, _createdDate, _beneficiary } = event;
   const tokenId = BigInt(_labelHash);
@@ -42,6 +43,12 @@ export function handleNameRegistered(
   ens.labelHash = _labelHash;
   ens.subdomain = _subdomain;
   ens.createdAt = _createdDate;
+
+  // Store orderHash if provided (from Squid Router CORAL flow)
+  if (orderHash) {
+    ens.orderHash = orderHash;
+  }
+
   ensMap.set(id, ens);
 
   const nft = nfts.get(id) || new NFT({ id });

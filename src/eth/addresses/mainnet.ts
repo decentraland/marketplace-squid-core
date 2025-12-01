@@ -7,8 +7,9 @@ export const Marketplace = "0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539";
 export const DCLRegistrar = "0x2a187453064356c898cae034eaed119e1663acb8";
 export const ERC721Bid = "0xe479dfd9664c693b2e2992300930b00bfde08233";
 export const DCLControllerV2 = "0xbe92b49aee993adea3a002adcda189a2b7dec56c";
-export const MarketplaceV3 =  "0x2d6b3508f9aca32d2550f92b2addba932e73c1ff";
-export const MarketplaceV3_V2 =  "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7";
+export const MarketplaceV3 = "0x2d6b3508f9aca32d2550f92b2addba932e73c1ff";
+export const MarketplaceV3_V2 = "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7";
+export const Spoke = "0xfe91aAA1012B47499CfE8758874F2D2c52B22cD8";
 
 export const MANA = "0x0f5d2fb29fb7d3cfee444a200298f468908cc942";
 

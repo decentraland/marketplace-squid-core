@@ -8,6 +8,7 @@ import * as marketplaceAbi from "../abi/Marketplace";
 import * as erc721Bid from "../abi/ERC721Bid";
 import * as dclControllerV2abi from "../abi/DCLControllerV2";
 import * as MarketplaceV3ABI from "../abi/DecentralandMarketplaceEthereum";
+import * as SpokeABI from "../abi/Spoke";
 import { Order, Sale, Transfer, Network as ModelNetwork } from "../model";
 import { processor } from "./processor";
 import { getNFTId } from "../common/utils";
@@ -317,6 +318,7 @@ processor.run(
               topic,
               event: dclRegistrarAbi.events.NameRegistered.decode(log),
               block,
+              log,
             });
             break;
           case dclControllerV2abi.events.NameBought.topic:
@@ -325,6 +327,7 @@ processor.run(
               topic,
               event: dclControllerV2abi.events.NameBought.decode(log),
               block,
+              log,
             });
 
             // const analyticsDayData = getOrCreateAnalyticsDayData(
@@ -862,13 +865,35 @@ processor.run(
     }
 
     // ENS Events
-    for (const { block, event, topic } of ensEvents) {
+    for (const { block, event, topic, log } of ensEvents) {
       if (topic === dclRegistrarAbi.events.NameRegistered.topic) {
+        let orderHash: string | undefined = undefined;
+
+        // Search for OrderFilled event from Spoke in the same transaction
+        for (let txLog of block.logs) {
+          if (
+            txLog.transactionIndex === log.transactionIndex &&
+            txLog.topics[0] === SpokeABI.events.OrderFilled.topic &&
+            txLog.address.toLowerCase() === addresses.Spoke?.toLowerCase()
+          ) {
+            // Decode the OrderFilled event to get the orderHash
+            const orderFilledEvent = SpokeABI.events.OrderFilled.decode(txLog);
+            orderHash = orderFilledEvent.orderHash;
+            ctx.log.info(
+              `Squid Router OrderFilled detected for ENS ${
+                (event as dclRegistrarAbi.NameRegisteredEventArgs)._subdomain
+              }: orderHash ${orderHash}`
+            );
+            break;
+          }
+        }
+
         handleNameRegistered(
           event as dclRegistrarAbi.NameRegisteredEventArgs,
           ens,
           nfts,
-          accounts
+          accounts,
+          orderHash
         );
       } else if (topic === dclControllerV2abi.events.NameBought.topic) {
         handleNameBought(

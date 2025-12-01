@@ -8,6 +8,7 @@ export const startBlockByNetwork: Record<string, Record<string, number>> = {
     MarketplaceV2: 8828687,
     Bid: 8828687,
     BidV2: 8828687,
+    Spoke: 78255530,
   },
   [ChainId.MATIC_AMOY]: {
     Factory: 5763249,
@@ -16,5 +17,6 @@ export const startBlockByNetwork: Record<string, Record<string, number>> = {
     MarketplaceV2: 5706656,
     BidV1: 21834173,
     BidV2: 5706662,
+    Spoke: 5706662, // we won't track the Spoke events for AMOY
   },
 };

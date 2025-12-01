@@ -24,3 +24,6 @@ export const CreditsManager = [
   "0xe9f961e6ded4e1476bbee4faab886d63a2493eb9",
   "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
 ];
+
+// Squid Router Spoke (CORAL)
+export const Spoke = "0xfe91aaa1012b47499cfe8758874f2d2c52b22cd8";
