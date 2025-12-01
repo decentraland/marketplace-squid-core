@@ -21,7 +21,7 @@ import * as RaritiesABI from "./abi/Rarity";
 import * as CollectionManagerABI from "./abi/CollectionManager";
 import * as MarketplaceV3 from "./abi/DecentralandMarketplacePolygon";
 import * as CreditsManagerABI from "./abi/CreditsManager";
-import * as SpokeABI from "./abi/Spoke";
+import * as SpokeABI from "../abi/Spoke";
 import { getBlockRange } from "../config";
 import { getAddresses } from "../common/utils/addresses";
 import { loadCollections } from "./utils/loaders";
