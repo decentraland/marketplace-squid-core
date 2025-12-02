@@ -21,6 +21,7 @@ import * as MarketplaceV3ABI from "./abi/DecentralandMarketplacePolygon";
 import * as ERC721BidABI from "./abi/ERC721Bid";
 import * as CollectionStoreABI from "./abi/CollectionStore";
 import * as CollectionManagerABI from "./abi/CollectionManager";
+import * as CreditsManagerABI from "./abi/CreditsManager";
 import { getAddresses } from "../common/utils/addresses";
 import {
   encodeTokenId,
@@ -206,12 +207,40 @@ processor.run(
             accountIds.add((await collectionContract.owner()).toLowerCase());
             collectionIds.add(event._address.toLowerCase());
 
+            // Check if there's a CreditUsed event in the same transaction
+            let usedCredits = false;
+            let creditValue: bigint | undefined = undefined;
+
+            // Search for CreditUsed event in the same transaction
+            for (let txLog of block.logs) {
+              if (
+                txLog.transactionIndex === log.transactionIndex &&
+                txLog.topics[0] === CreditsManagerABI.events.CreditUsed.topic &&
+                addresses.CreditsManager.map((a: string) =>
+                  a.toLowerCase()
+                ).includes(txLog.address.toLowerCase())
+              ) {
+                // Decode the CreditUsed event to get the _value
+                const creditEvent =
+                  CreditsManagerABI.events.CreditUsed.decode(txLog);
+                usedCredits = true;
+                creditValue = creditEvent._value;
+                ctx.log.info(
+                  `Credits detected for collection ${event._address}: ${creditValue} wei`
+                );
+                break;
+              }
+            }
+
             collectionFactoryEvents.push({
               event:
                 topic === CollectionFactoryABI.events.ProxyCreated.topic
                   ? CollectionFactoryABI.events.ProxyCreated.decode(log)
                   : CollectionFactoryV3ABI.events.ProxyCreated.decode(log),
               block,
+              usedCredits,
+              creditValue,
+              txHash: log.transactionHash,
             });
 
             break;
@@ -726,12 +755,21 @@ processor.run(
     }
 
     // Collection Factory Events
-    for (const { block, event } of collectionFactoryEvents) {
+    for (const {
+      block,
+      event,
+      usedCredits,
+      creditValue,
+      txHash,
+    } of collectionFactoryEvents) {
       await handleCollectionCreation(
         ctx,
         block.header,
         event._address,
-        storedData
+        storedData,
+        usedCredits,
+        creditValue,
+        txHash
       );
     }
 

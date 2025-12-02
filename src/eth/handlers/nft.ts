@@ -328,6 +328,9 @@ export async function handleAddItemV1(
     collection.searchIsMarketplaceV3Minter = false;
     collection.searchText = collection.name.toLowerCase();
     collection.isApproved = true;
+    collection.usedCredits = false;
+    collection.creditValue = BigInt(0);
+    collection.txHash = block.header.hash;
 
     collection.baseURI = baseURI;
     collection.chainId = BigInt(process.env.ETHEREUM_CHAIN_ID || 1);

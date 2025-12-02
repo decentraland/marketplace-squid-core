@@ -74,6 +74,15 @@ export class Collection {
     @BigIntColumn_({nullable: false})
     chainId!: bigint
 
+    @BooleanColumn_({nullable: false})
+    usedCredits!: boolean
+
+    @BigIntColumn_({nullable: true})
+    creditValue!: bigint | undefined | null
+
+    @StringColumn_({nullable: false})
+    txHash!: string
+
     @Column_("varchar", {length: 8, nullable: false})
     network!: Network
 }

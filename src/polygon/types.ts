@@ -54,6 +54,9 @@ export type PolygonInMemoryState = {
   collectionFactoryEvents: {
     event: CollectionFactoryV3ABI.ProxyCreatedEventArgs;
     block: BlockData;
+    usedCredits: boolean;
+    creditValue?: bigint;
+    txHash: string;
   }[];
   events: {
     topic: string;
