@@ -216,6 +216,8 @@ export async function handleTransferNFT(
   nft.updatedAt = timestamp;
   nft.transferredAt = timestamp;
 
+  await sendTransferEvent(ctx.store, nft, event, lastNotified);
+
   if (nft.activeOrder) {
     const order = orders.get(nft.activeOrder.id);
     if (order) {
@@ -225,7 +227,6 @@ export async function handleTransferNFT(
         : OrderStatus.transferred;
       if (order.status === OrderStatus.transferred) {
         nft.searchOrderStatus = OrderStatus.transferred;
-        await sendTransferEvent(ctx.store, nft, event, lastNotified);
       } else {
         nft.searchOrderStatus = OrderStatus.open;
       }
