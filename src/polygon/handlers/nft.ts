@@ -187,7 +187,8 @@ export async function handleTransferNFT(
   collectionAddress: string,
   event: TransferEventArgs,
   block: Block,
-  storedData: PolygonStoredData
+  storedData: PolygonStoredData,
+  lastNotified: bigint | null = null
 ): Promise<void> {
   const { nfts, orders } = storedData;
   if (event.tokenId.toString() === "") {
@@ -224,7 +225,7 @@ export async function handleTransferNFT(
         : OrderStatus.transferred;
       if (order.status === OrderStatus.transferred) {
         nft.searchOrderStatus = OrderStatus.transferred;
-        await sendTransferEvent(ctx.store, nft, event);
+        await sendTransferEvent(ctx.store, nft, event, lastNotified);
       } else {
         nft.searchOrderStatus = OrderStatus.open;
       }

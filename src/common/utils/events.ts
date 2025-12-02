@@ -26,9 +26,24 @@ export async function setLastNotified(store: Store, timestamp: bigint) {
   )
 }
 
-export async function sendTransferEvent(store: Store, nft: NFT, transferEvent: TransferEventArgs) {
+export async function sendTransferEvent(
+  store: Store, 
+  nft: NFT, 
+  transferEvent: TransferEventArgs,
+  lastNotified: bigint | null | undefined = undefined
+) {
   try {
-    const lastNotified = await getLastNotified(store)
+    // If lastNotified is undefined (not provided), fetch it from the database
+    // This should only happen when processing new blocks (not historical)
+    // If lastNotified is null, it means we're processing historical blocks and should skip
+    if (lastNotified === undefined) {
+      lastNotified = await getLastNotified(store)
+    }
+    
+    // If lastNotified is null (explicitly passed for historical blocks), skip sending event
+    if (lastNotified === null) {
+      return
+    }
 
     // Only send if there's no lastNotified timestamp or if the NFT was updated after the last notification
     if (lastNotified && nft.updatedAt <= lastNotified) {
