@@ -19,6 +19,7 @@ import * as dclRegistrarAbi from "../abi/DCLRegistrar";
 import * as dclControllerV2 from "../abi/DCLControllerV2";
 import * as erc721BidAbi from "../abi/ERC721Bid";
 import * as MarketplaceV3 from "../abi/DecentralandMarketplaceEthereum";
+import * as SpokeABI from "../abi/Spoke";
 
 const addresses = getAddresses(Network.ETHEREUM);
 const chainId = process.env.ETHEREUM_CHAIN_ID || ChainId.ETHEREUM_MAINNET;
@@ -113,6 +114,11 @@ export const processor = new EvmBatchProcessor()
     transaction: true,
     address: [addresses.MarketplaceV3_V2],
     topic0: [MarketplaceV3.events.Traded.topic],
+  })
+  .addLog({
+    transaction: true,
+    address: [addresses.Spoke],
+    topic0: [SpokeABI.events.OrderFilled.topic],
   });
 
 export type Fields = EvmBatchProcessorFields<typeof processor>;

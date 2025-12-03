@@ -22,3 +22,6 @@ export const TRANSAK_TOKEN = "0x0c86a754a29714c4fe9c6f1359fa7099ed174c0b";
 
 // Credits Manager Address
 export const CreditsManager = ["0x8052a560e6e6ac86eeb7e711a4497f639b322fb3"];
+
+// Squid Router Spoke (CORAL)
+export const Spoke = "0xfe91aaa1012b47499cfe8758874f2d2c52b22cd8";

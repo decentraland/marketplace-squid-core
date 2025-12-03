@@ -126,7 +126,19 @@ type ENS @entity {
   labelHash: String
   subdomain: String
   createdAt: BigInt
+  orderHash: String @index
   nft: NFT @derivedFrom(field: "ens")
+}
+
+type SquidRouterOrder @entity {
+  id: ID!
+  orderHash: String! @index
+  creditIds: [String!]!
+  totalCreditsUsed: BigInt!
+  txHash: String! @index
+  blockNumber: BigInt!
+  timestamp: BigInt!
+  network: Network!
 }
 
 type Transfer @entity {
@@ -433,7 +445,7 @@ type Collection @entity {
   # Credits fields
   usedCredits: Boolean!
   creditValue: BigInt
-  
+
   # Transaction hash
   txHash: String!
 

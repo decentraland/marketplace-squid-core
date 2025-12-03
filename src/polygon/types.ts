@@ -24,6 +24,7 @@ import {
   Sale,
   Transfer,
   Wearable,
+  SquidRouterOrder,
 } from "../model";
 import {
   BidContractData,
@@ -38,6 +39,7 @@ export type PolygonInMemoryState = {
   curations: Map<string, Curation>;
   mints: Map<string, Mint>;
   transfers: Map<string, Transfer>;
+  squidRouterOrders: Map<string, SquidRouterOrder>;
   // ids
   collectionIds: Set<string>;
   tokenIds: Map<string, bigint[]>;
