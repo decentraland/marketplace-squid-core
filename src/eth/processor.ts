@@ -117,7 +117,7 @@ export const processor = new EvmBatchProcessor()
   })
   .addLog({
     transaction: true,
-    address: ["0xfe91aaa1012b47499cfe8758874f2d2c52b22cd8"],
+    address: [addresses.Spoke],
     topic0: [SpokeABI.events.OrderFilled.topic],
   });
 
