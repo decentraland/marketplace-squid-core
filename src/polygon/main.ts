@@ -78,12 +78,16 @@ import {
   getTradeEventData,
   getTradeEventType,
 } from "../common/utils/marketplaceV3";
+import { getLastNotified } from "../common/utils/events";
 
 const schemaName = process.env.DB_SCHEMA;
 const addresses = getAddresses(Network.MATIC);
 let bytesRead = 0; // amount of bytes received
 const preloadedCollections = loadCollections().addresses;
 const preloadedCollectionsHeight = loadCollections().height;
+// Cache lastNotified timestamp to avoid querying DB for historical blocks
+let cachedLastNotified: bigint | null = null;
+let lastNotifiedLoaded = false;
 
 processor.run(
   new TypeormDatabase({
@@ -172,6 +176,39 @@ processor.run(
         ctx.blocks[0].header.height
       } to: ${ctx.blocks[ctx.blocks.length - 1].header.height}`
     );
+
+    // Load lastNotified once at startup to compare with batch timestamps
+    // This avoids querying DB for every transfer in historical blocks
+    if (!lastNotifiedLoaded) {
+      cachedLastNotified = await getLastNotified(ctx.store);
+      lastNotifiedLoaded = true;
+      console.log('Loaded lastNotified timestamp:', cachedLastNotified);
+    }
+
+    // Get the timestamp of the last block in this batch
+    const lastBlockTimestamp = BigInt(
+      ctx.blocks[ctx.blocks.length - 1].header.timestamp / 1000
+    );
+
+    // Determine if we're processing historical blocks or new blocks
+    // If lastBlockTimestamp <= cachedLastNotified, we're processing historical blocks
+    // and should skip sending transfer events (pass null)
+    // If lastBlockTimestamp > cachedLastNotified, we're processing new blocks
+    // and need to check lastNotified in each batch (reload it to keep it updated)
+    const isProcessingNewBlocks = 
+      cachedLastNotified === null || lastBlockTimestamp > cachedLastNotified;
+    
+    // If processing new blocks, reload lastNotified once per batch to keep it updated
+    // If processing historical blocks, pass null to skip sending events
+    let batchLastNotified: bigint | null | undefined = null;
+    if (isProcessingNewBlocks) {
+      // Load lastNotified once per batch and pass it to all transfers in this batch
+      // This avoids querying DB for each transfer
+      batchLastNotified = await getLastNotified(ctx.store);
+      // Update cache for next batch comparison
+      cachedLastNotified = batchLastNotified;
+    }
+
     for (let block of ctx.blocks) {
       for (let log of block.logs) {
         const topic = log.topics[0];
@@ -976,12 +1013,20 @@ processor.run(
           );
           break;
         case CollectionV2ABI.events.Transfer.topic:
-          handleTransfer(
-            log.address,
-            event as CollectionV2ABI.TransferEventArgs,
-            block.header,
-            storedData
-          );
+          try {
+            await handleTransfer(
+              ctx,
+              log.address,
+              event as CollectionV2ABI.TransferEventArgs,
+              block.header,
+              storedData,
+              batchLastNotified
+            );
+          } catch (e) {
+            console.log('Error in handleTransfer:', e);
+            console.log('Transfer event failed for NFT:', log.address, event);
+            // Continue processing other events even if this one fails
+          }
           break;
 
         case MarketplaceABI.events.OrderCreated.topic: {
