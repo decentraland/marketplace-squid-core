@@ -38,10 +38,12 @@ export async function sendTransferEvent(
     // If lastNotified is null, it means we're processing historical blocks and should skip
     if (lastNotified === undefined) {
       lastNotified = await getLastNotified(store)
+      console.log('LastNotified timestamp for NFT', nft.id, lastNotified)
     }
     
     // If lastNotified is null (explicitly passed for historical blocks), skip sending event
     if (lastNotified === null) {
+      console.log('Not sending transfer event for NFT', nft.id, 'because lastNotified is null')
       return
     }
 
