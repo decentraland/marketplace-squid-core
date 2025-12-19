@@ -1,5 +1,5 @@
 import { In, Not } from "typeorm";
-import { TypeormDatabase } from "@subsquid/typeorm-store";
+import { TypeormDatabase, Store } from "@subsquid/typeorm-store";
 import { Network } from "@dcl/schemas";
 import {
   Order,
@@ -10,7 +10,18 @@ import {
   Currency,
   ItemsDayData,
   SquidRouterOrder,
+  NFT,
+  Item,
+  Metadata,
+  Bid,
+  Sale,
+  Mint,
+  Curation,
 } from "../model";
+
+// ⚡ PERFORMANCE FLAG: Toggle between parallel and sequential upserts
+// Set to false to test if sequential is faster (avoids DB connection saturation)
+const UPSERT_IN_PARALLEL = false;
 import * as CollectionFactoryABI from "./abi/CollectionFactory";
 import * as CollectionFactoryV3ABI from "./abi/CollectionFactoryV3";
 import * as CollectionV2ABI from "./abi/CollectionV2";
@@ -24,6 +35,16 @@ import * as CollectionStoreABI from "./abi/CollectionStore";
 import * as CollectionManagerABI from "./abi/CollectionManager";
 import * as CreditsManagerABI from "./abi/CreditsManager";
 import * as SpokeABI from "../abi/Spoke";
+import {
+  fetchCollectionDataMulticall,
+  type CollectionData,
+} from "./utils/collectionMulticall";
+import {
+  dropIndicesForBulkLoad,
+  recreateIndices,
+  getIndexState,
+  checkIfNearHead,
+} from "../common/utils/indexManager";
 import { getAddresses } from "../common/utils/addresses";
 import {
   encodeTokenId,
@@ -89,6 +110,176 @@ const preloadedCollectionsHeight = loadCollections().height;
 let cachedLastNotified: bigint | null = null;
 let lastNotifiedLoaded = false;
 
+// ⚡ BULK INDEX MODE: Drop indices during initial sync, recreate when caught up
+// Enable via env var: BULK_INDEX_MODE=true
+const BULK_INDEX_MODE = true;
+// const BULK_INDEX_MODE = process.env.BULK_INDEX_MODE === 'true';
+let bulkModeInitialized = false;
+let indicesRecreated = false;
+
+// 📊 Universal event counter - tracks total events processed across all batches
+let totalEventsProcessed = 0;
+
+// ⚡ Extracted upsert function for cleaner code and benchmarking
+interface UpsertResult {
+  timing: {
+    phase1: number;
+    metadatas: number;
+    items: number;
+    nfts1: number;
+    orders: number;
+    phase4: number;
+    total: number;
+  };
+  nftsWithOrdersCount: number;
+}
+
+async function performUpserts(
+  store: Store,
+  fmt: (ms: number) => string,
+  storedData: any,
+  rarities: Map<string, Rarity>,
+  metadatas: Map<string, Metadata>,
+  items: Map<string, Item>,
+  nfts: Map<string, NFT>,
+  orders: Map<string, Order>,
+  bids: Map<string, Bid>,
+  sales: Map<string, Sale>,
+  mints: Map<string, Mint>,
+  transfers: Map<string, Transfer>,
+  curations: Map<string, Curation>,
+  squidRouterOrders: Map<string, SquidRouterOrder>
+): Promise<UpsertResult> {
+  const upsertStart = performance.now();
+  const timing = {
+    phase1: 0,
+    metadatas: 0,
+    items: 0,
+    nfts1: 0,
+    orders: 0,
+    phase4: 0,
+    total: 0,
+  };
+
+  if (UPSERT_IN_PARALLEL) {
+    // ⚡ PARALLEL MODE: All phase 1 upserts at once
+    let t0 = performance.now();
+    await Promise.all([
+      store.upsert([...rarities.values()]),
+      store.upsert([...storedData.counts.values()]),
+      store.upsert([...storedData.accounts.values()]),
+      store.upsert([...storedData.collections.values()]),
+      store.upsert([...storedData.analytics.values()]),
+      store.upsert([...storedData.itemDayDatas.values()]),
+      store.upsert([...storedData.accountsDayDatas.values()]),
+      store.upsert([...storedData.wearables.values()]),
+      store.upsert([...storedData.emotes.values()]),
+    ]);
+    timing.phase1 = performance.now() - t0;
+  } else {
+    // ⚡ SEQUENTIAL MODE: One at a time to avoid DB saturation
+    let t0 = performance.now();
+    await store.upsert([...rarities.values()]);
+    await store.upsert([...storedData.counts.values()]);
+    await store.upsert([...storedData.accounts.values()]);
+    await store.upsert([...storedData.collections.values()]);
+    await store.upsert([...storedData.analytics.values()]);
+    await store.upsert([...storedData.itemDayDatas.values()]);
+    await store.upsert([...storedData.accountsDayDatas.values()]);
+    await store.upsert([...storedData.wearables.values()]);
+    await store.upsert([...storedData.emotes.values()]);
+    timing.phase1 = performance.now() - t0;
+  }
+
+  // PHASE 2: Metadatas -> Items (items reference metadata)
+  let t0 = performance.now();
+  await store.upsert([...metadatas.values()]);
+  timing.metadatas = performance.now() - t0;
+
+  t0 = performance.now();
+  await store.upsert([...items.values()]);
+  timing.items = performance.now() - t0;
+
+  // PHASE 3: NFT <-> Order circular dependency workaround
+  const orderByNFT: Map<string, Order> = new Map();
+  for (const nft of nfts.values()) {
+    if (nft.activeOrder) {
+      orderByNFT.set(nft.id, nft.activeOrder);
+      nft.activeOrder = null;
+    }
+  }
+
+  t0 = performance.now();
+  await store.upsert([...nfts.values()]); // save NFTs with no orders
+  timing.nfts1 = performance.now() - t0;
+
+  t0 = performance.now();
+  await store.upsert([...orders.values()]); // save orders
+  timing.orders = performance.now() - t0;
+
+  // Restore activeOrder and collect NFTs that need update
+  const nftsWithOrders: NFT[] = [];
+  for (const [nftId, order] of orderByNFT) {
+    const nft = nfts.get(nftId);
+    if (nft) {
+      nft.activeOrder = order;
+      nftsWithOrders.push(nft);
+    }
+  }
+
+  // PHASE 4: NFTs with orders + bids + inserts
+  t0 = performance.now();
+  if (UPSERT_IN_PARALLEL) {
+    await Promise.all([
+      nftsWithOrders.length > 0
+        ? store.upsert(nftsWithOrders)
+        : Promise.resolve(),
+      store.upsert([...bids.values()]),
+      store.insert([...sales.values()]),
+      store.insert([...mints.values()]),
+      store.insert([...transfers.values()]),
+      store.insert([...curations.values()]),
+      store.insert([...squidRouterOrders.values()]),
+    ]);
+  } else {
+    // Sequential
+    if (nftsWithOrders.length > 0) await store.upsert(nftsWithOrders);
+    await store.upsert([...bids.values()]);
+    await store.insert([...sales.values()]);
+    await store.insert([...mints.values()]);
+    await store.insert([...transfers.values()]);
+    await store.insert([...curations.values()]);
+    await store.insert([...squidRouterOrders.values()]);
+  }
+  timing.phase4 = performance.now() - t0;
+
+  timing.total = performance.now() - upsertStart;
+
+  // Log upsert breakdown if slow
+  if (timing.total > 2000) {
+    const mode = UPSERT_IN_PARALLEL ? "PARALLEL" : "SEQUENTIAL";
+    // Calculate per-item speeds
+    const nftSpeed =
+      nfts.size > 0 ? (timing.nfts1 / nfts.size).toFixed(2) : "0";
+    const phase4Speed =
+      nftsWithOrders.length > 0
+        ? (timing.phase4 / nftsWithOrders.length).toFixed(2)
+        : "0";
+
+    console.log(
+      `💾 Upsert [${mode}]: phase1=${fmt(timing.phase1)}, metadatas=${fmt(
+        timing.metadatas
+      )}, items=${fmt(timing.items)}, nfts1=${fmt(timing.nfts1)}(${
+        nfts.size
+      } @ ${nftSpeed}ms/nft), orders=${fmt(timing.orders)}, phase4=${fmt(
+        timing.phase4
+      )}(${nftsWithOrders.length} w/orders)`
+    );
+  }
+
+  return { timing, nftsWithOrdersCount: nftsWithOrders.length };
+}
+
 processor.run(
   new TypeormDatabase({
     isolationLevel: "READ COMMITTED",
@@ -96,24 +287,63 @@ processor.run(
     stateSchema: `polygon_processor_${schemaName}`,
   }),
   async (ctx) => {
+    const batchStartTime = performance.now();
+    const metrics = {
+      blockRange: `${ctx.blocks[0].header.height}-${
+        ctx.blocks[ctx.blocks.length - 1].header.height
+      }`,
+      eventsProcessed: 0,
+      rpcCalls: { owner: 0, items: 0, contractData: 0, rarity: 0 },
+      rpcTime: { owner: 0, items: 0, rarity: 0, total: 0 }, // RPC timing in ms
+      dbQueryTime: 0,
+      eventLoopTime: 0,
+      upsertTime: 0,
+      preIndexTime: 0, // Time to pre-index logs
+      ownerMulticallTime: 0, // Time for parallel owner() fetching
+      // Granular event loop timing
+      eventLoopBreakdown: {
+        proxyCreated: 0,
+        orderEvents: 0,
+        bidEvents: 0,
+        transferEvents: 0,
+        collectionEvents: 0,
+        committeeEvents: 0,
+        tradedEvents: 0,
+        otherEvents: 0,
+      },
+      skipped: false,
+    };
+
     // update the amount of bytes read
     bytesRead += ctx.blocks.reduce(
       (acc, block) => acc + Buffer.byteLength(JSON.stringify(block), "utf8"),
       0
     );
 
-    const rarities = await ctx.store
-      .find(Rarity)
-      .then((q) => new Map(q.map((i) => [i.id, i])));
+    // ⚡ BULK INDEX MODE: Drop indices on first batch if enabled
+    if (BULK_INDEX_MODE && !bulkModeInitialized) {
+      bulkModeInitialized = true;
+      const em = (
+        ctx.store as unknown as { em: () => import("typeorm").EntityManager }
+      ).em();
+      console.log(
+        "⚡ BULK INDEX MODE enabled - dropping indices for faster indexing..."
+      );
+      await dropIndicesForBulkLoad(em);
+    }
 
-    const collectionIdsNotIncludedInPreloaded = await ctx.store
-      .find(Collection, {
-        where: {
-          id: Not(In(preloadedCollections)),
-          network: ModelNetwork.POLYGON,
-        },
-      })
-      .then((q) => new Set(q.map((c) => c.id)));
+    // ⚡ OPTIMIZATION 1: Parallelize initial DB queries
+    const [rarities, collectionIdsNotIncludedInPreloaded] = await Promise.all([
+      ctx.store.find(Rarity).then((q) => new Map(q.map((i) => [i.id, i]))),
+      ctx.store
+        .find(Collection, {
+          where: {
+            id: Not(In(preloadedCollections)),
+            network: ModelNetwork.POLYGON,
+          },
+        })
+        .then((q) => new Set(q.map((c) => c.id))),
+    ]);
 
     const isThereImportantDataInBatch = ctx.blocks.some((block) =>
       block.logs.some(
@@ -182,7 +412,7 @@ processor.run(
     if (!lastNotifiedLoaded) {
       cachedLastNotified = await getLastNotified(ctx.store);
       lastNotifiedLoaded = true;
-      console.log('Loaded lastNotified timestamp:', cachedLastNotified);
+      console.log("Loaded lastNotified timestamp:", cachedLastNotified);
     }
 
     // Get the timestamp of the last block in this batch
@@ -195,9 +425,9 @@ processor.run(
     // and should skip sending transfer events (pass null)
     // If lastBlockTimestamp > cachedLastNotified, we're processing new blocks
     // and need to check lastNotified in each batch (reload it to keep it updated)
-    const isProcessingNewBlocks = 
+    const isProcessingNewBlocks =
       cachedLastNotified === null || lastBlockTimestamp > cachedLastNotified;
-    
+
     // If processing new blocks, reload lastNotified once per batch to keep it updated
     // If processing historical blocks, pass null to skip sending events
     let batchLastNotified: bigint | null | undefined = null;
@@ -209,13 +439,156 @@ processor.run(
       cachedLastNotified = batchLastNotified;
     }
 
+    // ⚡ OPTIMIZATION: Pre-fetch contract data ONCE at the beginning of the batch
+    // These are cached after first call, so we just ensure they're loaded
+    const lastBlockHeader = ctx.blocks[ctx.blocks.length - 1].header;
+    const [
+      cachedMarketplaceData,
+      cachedMarketplaceV2Data,
+      cachedBidV2Data,
+      cachedStoreData,
+    ] = await Promise.all([
+      getMarketplaceContractData(ctx, lastBlockHeader),
+      getMarketplaceV2ContractData(ctx, lastBlockHeader),
+      getBidV2ContractData(ctx, lastBlockHeader),
+      getStoreContractData(ctx, lastBlockHeader),
+    ]);
+
+    // ⚡ OPTIMIZATION: Pre-index logs by transactionIndex for O(1) lookups (avoid O(n²) loops)
+    const preIndexStart = performance.now();
+
+    // Index: blockHeight-txIndex -> CreditUsed events
+    const creditEventsByTx = new Map<
+      string,
+      { creditId: string; value: bigint }[]
+    >();
+    // Index: blockHeight-txIndex -> OrderCreated orderHash
+    const orderHashByTx = new Map<string, string>();
+
+    for (let block of ctx.blocks) {
+      for (let log of block.logs) {
+        const txKey = `${block.header.height}-${log.transactionIndex}`;
+
+        // Index CreditUsed events
+        if (
+          log.topics[0] === CreditsManagerABI.events.CreditUsed.topic &&
+          addresses.CreditsManager.map((a: string) => a.toLowerCase()).includes(
+            log.address.toLowerCase()
+          )
+        ) {
+          const creditEvent = CreditsManagerABI.events.CreditUsed.decode(log);
+          if (!creditEventsByTx.has(txKey)) {
+            creditEventsByTx.set(txKey, []);
+          }
+          creditEventsByTx.get(txKey)!.push({
+            creditId: creditEvent._creditId,
+            value: creditEvent._value,
+          });
+        }
+
+        // Index OrderCreated events
+        if (
+          log.topics[0] === SpokeABI.events.OrderCreated.topic &&
+          log.address.toLowerCase() === addresses.Spoke?.toLowerCase()
+        ) {
+          const orderCreatedEvent = SpokeABI.events.OrderCreated.decode(log);
+          orderHashByTx.set(txKey, orderCreatedEvent.orderHash);
+        }
+      }
+    }
+
+    // ⚡ OPTIMIZATION: Collect all ProxyCreated events FIRST for parallel owner() fetching
+    const proxyCreatedEvents: { address: string; blockHeader: any }[] = [];
+
     for (let block of ctx.blocks) {
       for (let log of block.logs) {
         const topic = log.topics[0];
-        const timestamp = BigInt(block.header.timestamp / 1000);
-        const analyticDayDataId = `${(
-          BigInt(timestamp) / BigInt(86400)
-        ).toString()}-${ModelNetwork.POLYGON}`;
+        if (
+          (topic === CollectionFactoryABI.events.ProxyCreated.topic ||
+            topic === CollectionFactoryV3ABI.events.ProxyCreated.topic) &&
+          [addresses.CollectionFactory, addresses.CollectionFactoryV3]
+            .map((c) => c.toLowerCase())
+            .includes(log.address)
+        ) {
+          const event =
+            topic === CollectionFactoryABI.events.ProxyCreated.topic
+              ? CollectionFactoryABI.events.ProxyCreated.decode(log)
+              : CollectionFactoryV3ABI.events.ProxyCreated.decode(log);
+
+          proxyCreatedEvents.push({
+            address: event._address,
+            blockHeader: block.header,
+          });
+        }
+      }
+    }
+
+    metrics.preIndexTime = performance.now() - preIndexStart;
+
+    // ⚡ OPTIMIZATION: Fetch ALL collection data via MULTICALL (9 calls per collection → 1 batch)
+    // This is the biggest optimization: instead of 9 RPC calls per collection,
+    // we fetch name, symbol, owner, creator, isCompleted, isApproved, isEditable, baseURI, chainId
+    // for ALL collections in a single multicall batch!
+    let prefetchedCollectionData = new Map<string, CollectionData>();
+
+    if (proxyCreatedEvents.length > 0) {
+      const multicallStart = performance.now();
+
+      // Use the LAST block in the batch for multicall (all collections exist by then)
+      const lastBlock = ctx.blocks[ctx.blocks.length - 1].header;
+      const collectionAddresses = proxyCreatedEvents.map((e) => e.address);
+
+      prefetchedCollectionData = await fetchCollectionDataMulticall(
+        ctx,
+        lastBlock,
+        collectionAddresses
+      );
+
+      const multicallDuration = performance.now() - multicallStart;
+      metrics.ownerMulticallTime = multicallDuration;
+      metrics.rpcTime.owner = multicallDuration;
+      metrics.rpcTime.total += multicallDuration;
+      metrics.rpcCalls.owner = proxyCreatedEvents.length; // Track how many we fetched
+    }
+
+    // ⚡ TIMING: Track which event types are slow
+    const eventTypeCounts: Record<string, number> = {};
+    const eventTypeTimes: Record<string, number> = {};
+    const accumulationLoopStart = performance.now();
+
+    // ⚡ OPTIMIZATION: Pre-compute topicToName ONCE (not 19000 times)
+    const topicToName: Record<string, string> = {
+      [CollectionFactoryABI.events.ProxyCreated.topic]: "ProxyCreated",
+      [CollectionFactoryV3ABI.events.ProxyCreated.topic]: "ProxyCreatedV3",
+      [MarketplaceABI.events.OrderCreated.topic]: "OrderCreated",
+      [MarketplaceABI.events.OrderSuccessful.topic]: "OrderSuccessful",
+      [MarketplaceABI.events.OrderCancelled.topic]: "OrderCancelled",
+      [ERC721BidABI.events.BidCreated.topic]: "BidCreated",
+      [ERC721BidABI.events.BidAccepted.topic]: "BidAccepted",
+      [ERC721BidABI.events.BidCancelled.topic]: "BidCancelled",
+      [CollectionV2ABI.events.Transfer.topic]: "Transfer",
+      [CollectionV2ABI.events.Issue.topic]: "Issue",
+      [CollectionV2ABI.events.AddItem.topic]: "AddItem",
+      [MarketplaceV3ABI.events.Traded.topic]: "Traded",
+    };
+
+    // Track time spent BEFORE eventStart (BigInt operations, etc)
+    let preEventTime = 0;
+
+    for (let block of ctx.blocks) {
+      // ⚡ OPTIMIZATION: Cache block timestamp conversion ONCE per block
+      const blockTimestamp = BigInt(block.header.timestamp / 1000);
+      const dayId = (blockTimestamp / BigInt(86400)).toString();
+
+      for (let log of block.logs) {
+        const preStart = performance.now();
+        const topic = log.topics[0];
+        const analyticDayDataId = `${dayId}-${ModelNetwork.POLYGON}`;
+        metrics.eventsProcessed++;
+        preEventTime += performance.now() - preStart;
+
+        const eventStart = performance.now();
+
         switch (topic) {
           case CollectionFactoryABI.events.ProxyCreated.topic:
           case CollectionFactoryV3ABI.events.ProxyCreated.topic: {
@@ -235,67 +608,45 @@ processor.run(
                 ? CollectionFactoryABI.events.ProxyCreated.decode(log)
                 : CollectionFactoryV3ABI.events.ProxyCreated.decode(log);
 
-            // collectionsCreatedByFactory.add(event._address.toLowerCase());
-            collectionIdsCreatedInBatch.add(event._address); // add the Id to the list of collections to be processed
+            collectionIdsCreatedInBatch.add(event._address);
 
-            const collectionContract = new CollectionV2ABI.Contract(
-              ctx,
-              block.header,
-              event._address
+            // ⚡ OPTIMIZATION: Use pre-fetched data from multicall (O(1) lookup)
+            const prefetched = prefetchedCollectionData.get(
+              event._address.toLowerCase()
             );
 
-            accountIds.add((await collectionContract.owner()).toLowerCase());
+            // If we have prefetched data, use the owner from there
+            let owner: string;
+            if (prefetched) {
+              owner = prefetched.owner;
+            } else {
+              // Fallback to individual RPC call if multicall failed
+              const collectionContract = new CollectionV2ABI.Contract(
+                ctx,
+                block.header,
+                event._address
+              );
+              const rpcStart = performance.now();
+              owner = (await collectionContract.owner()).toLowerCase();
+              const rpcDuration = performance.now() - rpcStart;
+              metrics.rpcCalls.owner++;
+              metrics.rpcTime.owner += rpcDuration;
+              metrics.rpcTime.total += rpcDuration;
+            }
+
+            accountIds.add(owner);
             collectionIds.add(event._address.toLowerCase());
 
-            // Check if there's a CreditUsed event in the same transaction
-            let usedCredits = false;
-            let creditValue: bigint | undefined = undefined;
-            let orderHash: string | undefined = undefined;
+            // ⚡ OPTIMIZATION: Use pre-indexed lookups (O(1) instead of O(n) loop)
+            const txKey = `${block.header.height}-${log.transactionIndex}`;
+            const creditEvents = creditEventsByTx.get(txKey) || [];
+            const orderHash = orderHashByTx.get(txKey);
 
-            // Collect all credit events and look for OrderCreated
-            const creditEvents: { creditId: string; value: bigint }[] = [];
-
-            // Search for CreditUsed events and OrderCreated in the same transaction
-            for (let txLog of block.logs) {
-              // Check for CreditUsed events
-              if (
-                txLog.transactionIndex === log.transactionIndex &&
-                txLog.topics[0] === CreditsManagerABI.events.CreditUsed.topic &&
-                addresses.CreditsManager.map((a: string) =>
-                  a.toLowerCase()
-                ).includes(txLog.address.toLowerCase())
-              ) {
-                // Decode the CreditUsed event
-                const creditEvent =
-                  CreditsManagerABI.events.CreditUsed.decode(txLog);
-                usedCredits = true;
-
-                // Convert creditId (bytes32) to string
-                const creditId = creditEvent._creditId;
-                creditEvents.push({
-                  creditId,
-                  value: creditEvent._value,
-                });
-
-                // Sum up total credit value
-                if (creditValue === undefined) {
-                  creditValue = creditEvent._value;
-                } else {
-                  creditValue = creditValue + creditEvent._value;
-                }
-              }
-
-              // Check for OrderCreated from Spoke
-              if (
-                txLog.transactionIndex === log.transactionIndex &&
-                txLog.topics[0] === SpokeABI.events.OrderCreated.topic &&
-                txLog.address.toLowerCase() === addresses.Spoke?.toLowerCase()
-              ) {
-                const orderCreatedEvent =
-                  SpokeABI.events.OrderCreated.decode(txLog);
-                orderHash = orderCreatedEvent.orderHash;
-              }
-            }
+            const usedCredits = creditEvents.length > 0;
+            const creditValue = creditEvents.reduce(
+              (sum, c) => sum + c.value,
+              BigInt(0)
+            );
 
             // If credits were used and we have an orderHash, create SquidRouterOrder
             if (usedCredits && orderHash && creditEvents.length > 0) {
@@ -303,7 +654,7 @@ processor.run(
                 id: orderHash,
                 orderHash,
                 creditIds: creditEvents.map((c) => c.creditId),
-                totalCreditsUsed: creditValue || BigInt(0),
+                totalCreditsUsed: creditValue,
                 txHash: log.transactionHash,
                 blockNumber: BigInt(block.header.height),
                 timestamp: BigInt(block.header.timestamp / 1000),
@@ -328,7 +679,7 @@ processor.run(
                   : CollectionFactoryV3ABI.events.ProxyCreated.decode(log),
               block,
               usedCredits,
-              creditValue,
+              creditValue: usedCredits ? creditValue : undefined,
               txHash: log.transactionHash,
             });
 
@@ -353,20 +704,15 @@ processor.run(
               event.assetId,
             ]);
 
+            // ⚡ Use pre-cached contract data instead of awaiting
             events.push({
               topic,
               event,
               block,
               log,
-              marketplaceContractData: await getMarketplaceContractData(
-                ctx,
-                block.header
-              ),
-              marketplaceV2ContractData: await getMarketplaceV2ContractData(
-                ctx,
-                block.header
-              ),
-              bidV2ContractData: await getBidV2ContractData(ctx, block.header),
+              marketplaceContractData: cachedMarketplaceData,
+              marketplaceV2ContractData: cachedMarketplaceV2Data,
+              bidV2ContractData: cachedBidV2Data,
             });
             break;
 
@@ -391,24 +737,19 @@ processor.run(
             accountIds.add(event.buyer); // load buyers acount to update metrics
             analyticsIds.add(analyticDayDataId);
             // Add itemDayData ID placeholder for this NFT sale - will be resolved when we have NFT data
-            const dayID = BigInt(timestamp) / BigInt(86400);
+            const dayID = blockTimestamp / BigInt(86400);
             const nftId = `${event.nftAddress}-${event.assetId}`;
             const tempItemDayDataId = `${dayID.toString()}-nft-${nftId}`;
             itemDayDataIds.add(tempItemDayDataId);
+            // ⚡ Use pre-cached contract data
             events.push({
               topic,
               event,
               block,
               log,
-              marketplaceContractData: await getMarketplaceContractData(
-                ctx,
-                block.header
-              ),
-              marketplaceV2ContractData: await getMarketplaceV2ContractData(
-                ctx,
-                block.header
-              ),
-              bidV2ContractData: await getBidV2ContractData(ctx, block.header),
+              marketplaceContractData: cachedMarketplaceData,
+              marketplaceV2ContractData: cachedMarketplaceV2Data,
+              bidV2ContractData: cachedBidV2Data,
             });
             break;
           }
@@ -427,20 +768,15 @@ processor.run(
               ...(tokenIds.get(event.nftAddress) || []),
               event.assetId,
             ]);
+            // ⚡ Use pre-cached contract data
             events.push({
               topic,
               event,
               block,
               log,
-              marketplaceContractData: await getMarketplaceContractData(
-                ctx,
-                block.header
-              ),
-              marketplaceV2ContractData: await getMarketplaceV2ContractData(
-                ctx,
-                block.header
-              ),
-              bidV2ContractData: await getBidV2ContractData(ctx, block.header),
+              marketplaceContractData: cachedMarketplaceData,
+              marketplaceV2ContractData: cachedMarketplaceV2Data,
+              bidV2ContractData: cachedBidV2Data,
             });
             break;
           }
@@ -452,20 +788,15 @@ processor.run(
               event._tokenId,
             ]);
 
+            // ⚡ Use pre-cached contract data
             events.push({
               topic: ERC721BidABI.events.BidCreated.topic,
               event,
               block,
               log,
-              marketplaceContractData: await getMarketplaceContractData(
-                ctx,
-                block.header
-              ),
-              marketplaceV2ContractData: await getMarketplaceV2ContractData(
-                ctx,
-                block.header
-              ),
-              bidV2ContractData: await getBidV2ContractData(ctx, block.header),
+              marketplaceContractData: cachedMarketplaceData,
+              marketplaceV2ContractData: cachedMarketplaceV2Data,
+              bidV2ContractData: cachedBidV2Data,
             });
             break;
           }
@@ -485,24 +816,19 @@ processor.run(
             ]);
             analyticsIds.add(analyticDayDataId);
             // Add itemDayData ID placeholder for this NFT bid sale
-            const dayIDBid = BigInt(timestamp) / BigInt(86400);
+            const dayIDBid = blockTimestamp / BigInt(86400);
             const nftIdBid = `${event._tokenAddress}-${event._tokenId}`;
             const tempItemDayDataIdBid = `${dayIDBid.toString()}-nft-${nftIdBid}`;
             itemDayDataIds.add(tempItemDayDataIdBid);
+            // ⚡ Use pre-cached contract data
             events.push({
               topic: ERC721BidABI.events.BidAccepted.topic,
               event,
               block,
               log,
-              marketplaceContractData: await getMarketplaceContractData(
-                ctx,
-                block.header
-              ),
-              marketplaceV2ContractData: await getMarketplaceV2ContractData(
-                ctx,
-                block.header
-              ),
-              bidV2ContractData: await getBidV2ContractData(ctx, block.header),
+              marketplaceContractData: cachedMarketplaceData,
+              marketplaceV2ContractData: cachedMarketplaceV2Data,
+              bidV2ContractData: cachedBidV2Data,
             });
             break;
           }
@@ -518,20 +844,15 @@ processor.run(
               ...(tokenIds.get(event._tokenAddress) || []),
               event._tokenId,
             ]);
+            // ⚡ Use pre-cached contract data
             events.push({
               topic: ERC721BidABI.events.BidCancelled.topic,
               event,
               block,
               log,
-              marketplaceContractData: await getMarketplaceContractData(
-                ctx,
-                block.header
-              ),
-              marketplaceV2ContractData: await getMarketplaceV2ContractData(
-                ctx,
-                block.header
-              ),
-              bidV2ContractData: await getBidV2ContractData(ctx, block.header),
+              marketplaceContractData: cachedMarketplaceData,
+              marketplaceV2ContractData: cachedMarketplaceV2Data,
+              bidV2ContractData: cachedBidV2Data,
             });
             break;
           }
@@ -626,7 +947,7 @@ processor.run(
                 accountIds.add(event._beneficiary.toLowerCase());
                 analyticsIds.add(analyticDayDataId);
                 // Add itemDayData ID for this item sale
-                const dayID = BigInt(timestamp) / BigInt(86400);
+                const dayID = blockTimestamp / BigInt(86400);
                 const itemId = `${log.address}-${event._itemId}`;
                 const itemDayDataId = `${dayID.toString()}-${itemId}`;
                 itemDayDataIds.add(itemDayDataId);
@@ -685,6 +1006,7 @@ processor.run(
                 Array.from(rarities).map(([k, v]) => [k, { ...v }])
               );
               collectionIds.add(log.address.toLowerCase()); // @TODO check lowercase if needed
+              // ⚡ Use pre-cached store contract data
               events.push({
                 topic,
                 event,
@@ -693,10 +1015,7 @@ processor.run(
                 transaction: log.transaction,
                 // make a copy of rarities so it has an snapshot at this block
                 rarities: raritiesCopy,
-                storeContractData: await getStoreContractData(
-                  ctx,
-                  block.header
-                ),
+                storeContractData: cachedStoreData,
               });
             } else {
               console.log("ERROR: Event not decoded correctly");
@@ -733,7 +1052,13 @@ processor.run(
           }
           case CollectionManagerABI.events.RaritiesSet.topic: {
             const event = CollectionManagerABI.events.RaritiesSet.decode(log);
+            // ⚠️ RPC CALLS: handleRaritiesSet makes multiple RPC calls (raritiesCount + rarities[i])
+            const rpcRarityStart = performance.now();
             await handleRaritiesSet(ctx, block.header, event, rarities);
+            const rpcRarityDuration = performance.now() - rpcRarityStart;
+            metrics.rpcCalls.rarity++;
+            metrics.rpcTime.rarity += rpcRarityDuration;
+            metrics.rpcTime.total += rpcRarityDuration;
             break;
           }
           case MarketplaceV3ABI.events.Traded.topic: {
@@ -749,7 +1074,14 @@ processor.run(
                 block.header,
                 collectionAddress
               );
+              // ⚠️ RPC CALL: collectionContract.items() - one per Traded secondary sale
+              const rpcItemsStart = performance.now();
               const item = await collectionContract.items(itemId);
+              const rpcItemsDuration = performance.now() - rpcItemsStart;
+              metrics.rpcCalls.items++;
+              metrics.rpcTime.items += rpcItemsDuration;
+              metrics.rpcTime.total += rpcItemsDuration;
+
               tokenId = encodeTokenId(Number(itemId), Number(item.totalSupply));
             }
             collectionIds.add(collectionAddress);
@@ -767,7 +1099,7 @@ processor.run(
             accountIds.add(buyer); // load buyers acount to update metrics
             analyticsIds.add(analyticDayDataId);
             // Add itemDayData ID for this trade
-            const dayIDTrade = BigInt(timestamp) / BigInt(86400);
+            const dayIDTrade = blockTimestamp / BigInt(86400);
             if (itemId !== undefined) {
               // Primary sale - we have the itemId directly
               const itemIdStr = `${collectionAddress}-${itemId}`;
@@ -780,6 +1112,7 @@ processor.run(
               itemDayDataIds.add(tempItemDayDataIdTrade);
             }
 
+            // ⚡ Use pre-cached store contract data
             events.push({
               topic,
               event,
@@ -790,16 +1123,35 @@ processor.run(
               rarities: new Map(
                 Array.from(rarities).map(([k, v]) => [k, { ...v }])
               ),
-              storeContractData: await getStoreContractData(ctx, block.header),
+              storeContractData: cachedStoreData,
             });
 
             break;
           }
         }
+
+        // Track event timing - use pre-computed topicToName
+        const eventDuration = performance.now() - eventStart;
+        const eventType = topicToName[topic] || "other";
+        eventTypeCounts[eventType] = (eventTypeCounts[eventType] || 0) + 1;
+        eventTypeTimes[eventType] =
+          (eventTypeTimes[eventType] || 0) + eventDuration;
       }
     }
 
+    // Track accumulation loop time (used in Event Loop Breakdown below)
+    const accumulationLoopTime = performance.now() - accumulationLoopStart;
+
+    // Calculate total event processing time
+    const totalEventTime = Object.values(eventTypeTimes).reduce(
+      (a, b) => a + b,
+      0
+    );
+    const unexplainedTime =
+      accumulationLoopTime - totalEventTime - preEventTime;
+
     // get stored data
+    const dbQueryStart = performance.now();
     const storedData = await getStoredData(ctx, {
       accountIds,
       collectionIds,
@@ -809,6 +1161,7 @@ processor.run(
       itemIds,
       itemDayDataIds,
     });
+    metrics.dbQueryTime = performance.now() - dbQueryStart;
 
     const { counts, accounts, orders, bids, nfts, items, metadatas } =
       storedData;
@@ -844,25 +1197,33 @@ processor.run(
     }
 
     // Collection Factory Events
-    for (const {
-      block,
-      event,
-      usedCredits,
-      creditValue,
-      txHash,
-    } of collectionFactoryEvents) {
-      await handleCollectionCreation(
-        ctx,
-        block.header,
-        event._address,
-        storedData,
-        usedCredits,
-        creditValue,
-        txHash
-      );
-    }
+    // ⚡ OPTIMIZATION: Process all collection creations in PARALLEL with MULTICALL data
+    const handleCollectionStart = performance.now();
+    await Promise.all(
+      collectionFactoryEvents.map(
+        ({ block, event, usedCredits, creditValue, txHash }) => {
+          // Use full prefetched data from multicall
+          const prefetched = prefetchedCollectionData.get(
+            event._address.toLowerCase()
+          );
+          return handleCollectionCreation(
+            ctx,
+            block.header,
+            event._address,
+            storedData,
+            usedCredits,
+            creditValue,
+            txHash,
+            prefetched // Pass ALL prefetched data (name, symbol, owner, etc.)
+          );
+        }
+      )
+    );
+    metrics.eventLoopBreakdown.proxyCreated =
+      performance.now() - handleCollectionStart;
 
-    // Collection Events
+    // Collection Events - process accumulated events
+    const collectionEventsStart = performance.now();
     for (const {
       block,
       event,
@@ -1023,8 +1384,8 @@ processor.run(
               batchLastNotified
             );
           } catch (e) {
-            console.log('Error in handleTransfer:', e);
-            console.log('Transfer event failed for NFT:', log.address, event);
+            console.log("Error in handleTransfer:", e);
+            console.log("Transfer event failed for NFT:", log.address, event);
             // Continue processing other events even if this one fails
           }
           break;
@@ -1107,71 +1468,144 @@ processor.run(
         }
       }
     }
+    metrics.eventLoopBreakdown.collectionEvents =
+      performance.now() - collectionEventsStart;
 
     // Committee Events
     for (const event of committeeEvents) {
       handleMemeberSet(accounts, event);
     }
 
-    await ctx.store.upsert([...rarities.values()]);
-    for (const [key, value] of Object.entries(storedData)) {
-      if (
-        value &&
-        !["nfts", "orders", "transfers", "items", "metadata", "bids"].includes(
-          key
-        )
-      ) {
-        await ctx.store.upsert([...value.values()]);
-      }
-    }
-    // metadatas has to go before items
-    await ctx.store.upsert([...metadatas.values()]);
-    await ctx.store.upsert([...items.values()]);
+    // ⚡ FIX: Calculate eventLoopTime as ONLY event processing (not DB queries)
+    // Event Loop = accumulation + RPC + handleCollectionCreation + processEvents
+    // DB Queries are SEPARATE and should not be included
+    metrics.eventLoopTime =
+      accumulationLoopTime +
+      metrics.rpcTime.total +
+      metrics.eventLoopBreakdown.proxyCreated +
+      metrics.eventLoopBreakdown.collectionEvents;
 
-    // work around for circular dependency of orders and nfts
-    const orderByNFT: Map<string, Order> = new Map();
-    for (const nft of nfts.values()) {
-      if (nft.activeOrder) {
-        orderByNFT.set(nft.id, nft.activeOrder);
-        nft.activeOrder = null;
-      }
-    }
-    await ctx.store.upsert([...nfts.values()]); // save NFTs with no orders
-    await ctx.store.upsert([...orders.values()]); // save orders
+    // Helper to format time (show seconds if > 1000ms)
+    const fmt = (ms: number) =>
+      ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
 
-    // put NFT active orders back
-    for (const [nftId, order] of orderByNFT) {
-      const nft = nfts.get(nftId);
-      if (nft) {
-        nft.activeOrder = order;
-      }
-    }
-    await ctx.store.upsert([...nfts.values()]); // save NFTs back with orders
-    await ctx.store.upsert([...bids.values()]); // bids needs to be upserted after nfts
-    await ctx.store.upsert([...rarities.values()]); // upsert rarities
+    // Log event loop breakdown if slow
+    if (metrics.eventLoopTime > 1000 || metrics.dbQueryTime > 1000) {
+      // Get top event types by time
+      const topEvents = Object.entries(eventTypeTimes)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([type, time]) => `${type}=${fmt(time)}(${eventTypeCounts[type]})`)
+        .join(", ");
 
-    // insert all new entities with no dependencies
-    await ctx.store.insert([...sales.values()]);
-    await ctx.store.insert([...mints.values()]);
-    await ctx.store.insert([...transfers.values()]);
-    await ctx.store.insert([...curations.values()]);
-    await ctx.store.insert([...squidRouterOrders.values()]);
-    // console.log('accounts polygon: ', accounts);
-    ctx.log.info(
-      `Batch from block: ${ctx.blocks[0].header.height} to ${
-        ctx.blocks[ctx.blocks.length - 1].header.height
-      } saved, counts: ${counts.size}, accounts: ${
-        accounts.size
-      }, collections: ${storedData.collections.size}, nfts: ${
-        nfts.size
-      }, items: ${items.size}, metadatas: ${metadatas.size}, bids: ${
-        bids.size
-      }, sales: ${sales.size}, mints: ${mints.size}, transfers: ${
-        transfers.size
-      }, curations: ${curations.size}, squidRouterOrders: ${
-        squidRouterOrders.size
-      }`
+      console.log(
+        `📍 Breakdown: accumulation=${fmt(accumulationLoopTime)}, RPC=${fmt(
+          metrics.rpcTime.total
+        )}, handleCollection=${fmt(
+          metrics.eventLoopBreakdown.proxyCreated
+        )}, processEvents=${fmt(metrics.eventLoopBreakdown.collectionEvents)}`
+      );
+      console.log(`   └─ Events: ${topEvents}`);
+    }
+
+    // ⚡ DB UPSERTS - use extracted function
+    const upsertResult = await performUpserts(
+      ctx.store,
+      fmt,
+      storedData,
+      rarities,
+      metadatas,
+      items,
+      nfts,
+      orders,
+      bids,
+      sales,
+      mints,
+      transfers,
+      curations,
+      squidRouterOrders
     );
-    console.log("bytes read until now: ", bytesRead);
+
+    metrics.upsertTime = upsertResult.timing.total;
+    const totalBatchTime = performance.now() - batchStartTime;
+
+    // Calculate percentages
+    const pctDb =
+      totalBatchTime > 0
+        ? ((metrics.dbQueryTime / totalBatchTime) * 100).toFixed(1)
+        : "0";
+    const pctEvent =
+      totalBatchTime > 0
+        ? ((metrics.eventLoopTime / totalBatchTime) * 100).toFixed(1)
+        : "0";
+    const pctUpsert =
+      totalBatchTime > 0
+        ? ((metrics.upsertTime / totalBatchTime) * 100).toFixed(1)
+        : "0";
+
+    // Check for slow operations (> 1s)
+    const warnings: string[] = [];
+    if (metrics.dbQueryTime > 1000)
+      warnings.push(`DB Queries: ${fmt(metrics.dbQueryTime)}`);
+    if (metrics.eventLoopTime > 1000)
+      warnings.push(`Event Loop: ${fmt(metrics.eventLoopTime)}`);
+    if (metrics.rpcTime.total > 1000)
+      warnings.push(`RPC: ${fmt(metrics.rpcTime.total)}`);
+    if (metrics.upsertTime > 1000)
+      warnings.push(`DB Upserts: ${fmt(metrics.upsertTime)}`);
+    if (totalBatchTime > 3000) warnings.push(`Total: ${fmt(totalBatchTime)}`);
+
+    const warningLine =
+      warnings.length > 0 ? `\n⚠️  WARNING SLOW: ${warnings.join(" | ")}` : "";
+
+    // RPC timing breakdown (only show if there were RPC calls)
+    const rpcBreakdown =
+      metrics.rpcTime.total > 0
+        ? `\n🌐 RPC: ${fmt(metrics.rpcTime.total)} (owner: ${fmt(
+            metrics.ownerMulticallTime
+          )}, items: ${fmt(metrics.rpcTime.items)}, rarity: ${fmt(
+            metrics.rpcTime.rarity
+          )})`
+        : "";
+
+    // Update global event counter
+    totalEventsProcessed += metrics.eventsProcessed;
+
+    // Log detailed metrics in readable format
+    console.log(`
+📊 ============ POLYGON BATCH METRICS ============
+📦 Blocks: ${metrics.blockRange}
+⏱️  Total: ${fmt(totalBatchTime)}
+   ├─ DB Queries: ${fmt(metrics.dbQueryTime)} (${pctDb}%)
+   ├─ Event Loop: ${fmt(metrics.eventLoopTime)} (${pctEvent}%)
+   └─ DB Upserts: ${fmt(metrics.upsertTime)} (${pctUpsert}%)
+📈 Events: ${
+      metrics.eventsProcessed
+    } (total: ${totalEventsProcessed.toLocaleString()})
+🔗 RPC: owner=${metrics.rpcCalls.owner}, items=${
+      metrics.rpcCalls.items
+    }, rarity=${metrics.rpcCalls.rarity}${rpcBreakdown}
+💾 Entities: NFTs=${nfts.size}, Items=${items.size}, Collections=${
+      storedData.collections.size
+    }, Orders=${orders.size}, Sales=${sales.size}, Bids=${bids.size}, Mints=${
+      mints.size
+    }, Transfers=${transfers.size}, Curations=${curations.size}${warningLine}
+=================================================
+`);
+
+    ctx.log.info(
+      `Batch ${metrics.blockRange} saved: nfts=${nfts.size}, items=${items.size}, sales=${sales.size}, mints=${mints.size}, transfers=${transfers.size}`
+    );
+
+    // ⚡ BULK INDEX MODE: Recreate indices when we're caught up with chain head
+    // Check if we're within 100 blocks of the chain head (ctx.isHead is true when at tip)
+    if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
+      indicesRecreated = true;
+      const em = (
+        ctx.store as unknown as { em: () => import("typeorm").EntityManager }
+      ).em();
+      console.log("⚡ Caught up with chain head! Recreating indices...");
+      await recreateIndices(em);
+    }
   }
 );

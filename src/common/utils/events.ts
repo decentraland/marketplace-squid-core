@@ -38,18 +38,18 @@ export async function sendTransferEvent(
     // If lastNotified is null, it means we're processing historical blocks and should skip
     if (lastNotified === undefined) {
       lastNotified = await getLastNotified(store)
-      console.log('LastNotified timestamp for NFT', nft.id, lastNotified)
+      // Only log once per batch, not per NFT - this was causing spam
     }
     
     // If lastNotified is null (explicitly passed for historical blocks), skip sending event
     if (lastNotified === null) {
-      console.log('Not sending transfer event for NFT', nft.id, 'because lastNotified is null')
+      // Skip silently - historical blocks don't need logging
       return
     }
 
     // Only send if there's no lastNotified timestamp or if the NFT was updated after the last notification
     if (lastNotified && nft.updatedAt <= lastNotified) {
-      console.log('Not sending transfer event for NFT', nft.id, 'because it was not updated since the last notified timestamp')
+      // Skip silently - no need to log each skipped NFT
       return
     }
 
@@ -68,8 +68,11 @@ export async function sendTransferEvent(
     
     // Update lastNotified timestamp after successfully sending the event
     await setLastNotified(store, nft.updatedAt)
+    
+    // Only log successful sends (these are rare in production)
+    console.log(`[EVENTS] ✅ Sent transfer event for NFT ${nft.id}`)
   } catch (e) {
-    console.log('Error in sendTransferEvent:', e)
-    console.log('Could not send transfer event for NFT', nft.id)
+    console.log('[EVENTS] ❌ Error in sendTransferEvent:', e)
+    console.log('[EVENTS] Could not send transfer event for NFT', nft.id)
   }
 }

@@ -77,6 +77,19 @@ processor.run(
     stateSchema: `eth_processor_${schemaName}`,
   }),
   async (ctx) => {
+    // ============ BENCHMARKING: Start total time ============
+    const batchStartTime = Date.now();
+    const metrics = {
+      blockRange: `${ctx.blocks[0]?.header.height}-${ctx.blocks[ctx.blocks.length - 1]?.header.height}`,
+      eventAccumulationTime: 0,
+      dbQueryTime: 0,
+      eventProcessingTime: 0,
+      upsertTime: 0,
+      eventsProcessed: 0,
+      rpcCalls: 0,
+      skipped: false,
+    };
+
     // update the amount of bytes read
     bytesRead += ctx.blocks.reduce(
       (acc, block) => acc + Buffer.byteLength(JSON.stringify(block), "utf8"),
@@ -84,6 +97,32 @@ processor.run(
     );
     console.log("bytesRead: ", bytesRead);
     const addresses = getAddresses(Network.ETHEREUM);
+
+    // ============ OPTIMIZATION #5: Skip Empty Batches ============
+    const relevantAddresses = new Set([
+      addresses.LANDRegistry?.toLowerCase(),
+      addresses.EstateRegistry?.toLowerCase(),
+      addresses.DCLRegistrar?.toLowerCase(),
+      addresses.Marketplace?.toLowerCase(),
+      addresses.ERC721Bid?.toLowerCase(),
+      addresses.DCLControllerV2?.toLowerCase(),
+      addresses.MarketplaceV3?.toLowerCase(),
+      addresses.MarketplaceV3_V2?.toLowerCase(),
+      addresses.Spoke?.toLowerCase(),
+      ...Object.values(addresses.collections || {}).map((addr) => (addr as string)?.toLowerCase()),
+    ].filter(Boolean));
+
+    const hasRelevantEvents = ctx.blocks.some(block =>
+      block.logs.some(log => relevantAddresses.has(log.address.toLowerCase()))
+    );
+
+    if (!hasRelevantEvents) {
+      metrics.skipped = true;
+      ctx.log.info(`⏭️ SKIPPED empty batch: ${metrics.blockRange} (no DCL events)`);
+      console.log(`📊 METRICS: ${JSON.stringify(metrics)}`);
+      return;
+    }
+
     const {
       mints,
       collectionIds,
@@ -102,9 +141,17 @@ processor.run(
     } = getBatchInMemoryState();
 
     ctx.log.info(`blocks, ${ctx.blocks.length}`);
+
+    // ============ OPTIMIZATION #1: Fetch owner cuts ONCE per batch ============
+    const eventAccumulationStart = Date.now();
+    await getOwnerCutsValues(ctx, ctx.blocks[0]);
+    metrics.rpcCalls++;
+    console.log(`⚡ Owner cuts fetched ONCE for entire batch (was: per block)`);
+
     for (let block of ctx.blocks) {
-      await getOwnerCutsValues(ctx, block);
+      // REMOVED: await getOwnerCutsValues(ctx, block); - now fetched once above!
       for (let log of block.logs) {
+        metrics.eventsProcessed++;
         const topic = log.topics[0];
         const timestamp = BigInt(block.header.timestamp / 1000);
         const analyticDayDataId = `${(
@@ -530,6 +577,8 @@ processor.run(
       }
     }
 
+    metrics.eventAccumulationTime = Date.now() - eventAccumulationStart;
+
     if (tokenIds.size) {
       console.time("multicall tokenURIs");
     }
@@ -575,6 +624,8 @@ processor.run(
       ]);
     });
 
+    // ============ BENCHMARKING: DB Queries ============
+    const dbQueryStart = Date.now();
     const {
       accounts,
       datas,
@@ -601,6 +652,7 @@ processor.run(
       collectionIds,
       itemIds,
     });
+    metrics.dbQueryTime = Date.now() - dbQueryStart;
 
     const sales = new Map<string, Sale>();
 
@@ -666,6 +718,9 @@ processor.run(
       });
     }
 
+    // ============ BENCHMARKING: Event Processing ============
+    const eventProcessingStart = Date.now();
+    
     // markteplaceEvents Events
     for (const {
       block,
@@ -904,29 +959,28 @@ processor.run(
       }
     }
 
+    metrics.eventProcessingTime = Date.now() - eventProcessingStart;
+
     try {
-      // upsert all entities
-      const maps = [
-        accounts,
-        datas,
-        estates,
-        parcels,
-        wearables,
-        ens,
-        analytics,
-        counts,
-        collections,
-        metadatas,
-        items,
-      ];
+      // ============ BENCHMARKING: DB Upserts ============
+      const upsertStart = Date.now();
+      
+      // ⚡ PHASE 1: Parallel upserts for independent entities (no FK dependencies)
+      await Promise.all([
+        ctx.store.upsert([...accounts.values()]),
+        ctx.store.upsert([...datas.values()]),
+        ctx.store.upsert([...estates.values()]),
+        ctx.store.upsert([...parcels.values()]),
+        ctx.store.upsert([...wearables.values()]),
+        ctx.store.upsert([...ens.values()]),
+        ctx.store.upsert([...analytics.values()]),
+        ctx.store.upsert([...counts.values()]),
+        ctx.store.upsert([...collections.values()]),
+        ctx.store.upsert([...metadatas.values()]),
+        ctx.store.upsert([...items.values()]),
+      ]);
 
-      for (const entity of maps) {
-        if (entity) {
-          await ctx.store.upsert([...entity.values()]);
-        }
-      }
-
-      // work around for circular dependency of orders and nfts
+      // ⚡ PHASE 2: NFT <-> Order circular dependency workaround
       const orderByNFT: Map<string, Order> = new Map();
       for (const nft of nfts.values()) {
         if (nft.activeOrder) {
@@ -934,8 +988,7 @@ processor.run(
           nft.activeOrder = null;
         }
       }
-      await ctx.store.upsert([...nfts.values()]); // save NFTs with no orders
-      await ctx.store.upsert([...sales.values()]); // save NFTs with no orders
+      await ctx.store.upsert([...nfts.values()]); // save NFTs with no orders (1st upsert)
       await ctx.store.upsert([...orders.values()]); // save orders
 
       // put NFT active orders back
@@ -945,10 +998,46 @@ processor.run(
           nft.activeOrder = order;
         }
       }
-      await ctx.store.upsert([...nfts.values()]); // save NFTs back with orders
-      await ctx.store.upsert([...bids.values()]);
-      await ctx.store.insert([...transfers.values()]);
-      await ctx.store.insert([...mints.values()]);
+      
+      // ⚡ PHASE 3: Parallel - NFTs with orders + bids + sales + inserts
+      await Promise.all([
+        ctx.store.upsert([...nfts.values()]), // save NFTs back with orders (2nd upsert)
+        ctx.store.upsert([...bids.values()]),
+        ctx.store.upsert([...sales.values()]),
+        ctx.store.insert([...transfers.values()]),
+        ctx.store.insert([...mints.values()]),
+      ]);
+
+      metrics.upsertTime = Date.now() - upsertStart;
+
+      // ============ BENCHMARKING: Total time and summary ============
+      const totalTime = Date.now() - batchStartTime;
+      
+      // Check for slow operations (> 1s)
+      const warnings: string[] = [];
+      if (metrics.eventAccumulationTime > 1000) warnings.push(`Event Accum: ${metrics.eventAccumulationTime}ms`);
+      if (metrics.dbQueryTime > 1000) warnings.push(`DB Queries: ${metrics.dbQueryTime}ms`);
+      if (metrics.eventProcessingTime > 1000) warnings.push(`Event Proc: ${metrics.eventProcessingTime}ms`);
+      if (metrics.upsertTime > 1000) warnings.push(`DB Upserts: ${metrics.upsertTime}ms`);
+      if (totalTime > 5000) warnings.push(`Total: ${totalTime}ms`);
+      
+      const warningLine = warnings.length > 0 
+        ? `\n⚠️  WARNING SLOW: ${warnings.join(' | ')}`
+        : '';
+      
+      console.log(`
+📊 ============ ETH BATCH METRICS ============
+📦 Blocks: ${metrics.blockRange}
+⏱️  Total Time: ${totalTime}ms
+   ├─ Event Accumulation: ${metrics.eventAccumulationTime}ms (${((metrics.eventAccumulationTime/totalTime)*100).toFixed(1)}%)
+   ├─ DB Queries: ${metrics.dbQueryTime}ms (${((metrics.dbQueryTime/totalTime)*100).toFixed(1)}%)
+   ├─ Event Processing: ${metrics.eventProcessingTime}ms (${((metrics.eventProcessingTime/totalTime)*100).toFixed(1)}%)
+   └─ DB Upserts: ${metrics.upsertTime}ms (${((metrics.upsertTime/totalTime)*100).toFixed(1)}%)
+📈 Events Processed: ${metrics.eventsProcessed}
+🔗 RPC Calls: ${metrics.rpcCalls}
+💾 Entities: NFTs=${nfts.size}, Orders=${orders.size}, Accounts=${accounts.size}${warningLine}
+==============================================
+`);
 
       // log some stats
       ctx.log.info(
