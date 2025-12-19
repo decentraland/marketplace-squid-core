@@ -120,6 +120,10 @@ let indicesRecreated = false;
 // 📊 Universal event counter - tracks total events processed across all batches
 let totalEventsProcessed = 0;
 
+// ⚡ Disable lastNotified logic - no reads/writes to squids table
+// This avoids permission errors and speeds up indexing
+const ENABLE_LAST_NOTIFIED = false;
+
 // ⚡ Extracted upsert function for cleaner code and benchmarking
 interface UpsertResult {
   timing: {
@@ -409,7 +413,8 @@ processor.run(
 
     // Load lastNotified once at startup to compare with batch timestamps
     // This avoids querying DB for every transfer in historical blocks
-    if (!lastNotifiedLoaded) {
+    // ⚡ Skip entirely if ENABLE_LAST_NOTIFIED is false
+    if (ENABLE_LAST_NOTIFIED && !lastNotifiedLoaded) {
       cachedLastNotified = await getLastNotified(ctx.store);
       lastNotifiedLoaded = true;
       console.log("Loaded lastNotified timestamp:", cachedLastNotified);
@@ -430,8 +435,9 @@ processor.run(
 
     // If processing new blocks, reload lastNotified once per batch to keep it updated
     // If processing historical blocks, pass null to skip sending events
+    // ⚡ Skip entirely if ENABLE_LAST_NOTIFIED is false
     let batchLastNotified: bigint | null | undefined = null;
-    if (isProcessingNewBlocks) {
+    if (ENABLE_LAST_NOTIFIED && isProcessingNewBlocks) {
       // Load lastNotified once per batch and pass it to all transfers in this batch
       // This avoids querying DB for each transfer
       batchLastNotified = await getLastNotified(ctx.store);
