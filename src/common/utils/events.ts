@@ -5,7 +5,16 @@ import { EntityManager } from 'typeorm'
 import { NFT } from '../../model'
 import eventPublisher from './event_publisher'
 
+// ⚡ Disable lastNotified logic entirely - no reads/writes to squids table
+// Set to true to enable lastNotified tracking
+const ENABLE_LAST_NOTIFIED = false;
+
 export async function getLastNotified(store: Store): Promise<bigint | null> {
+  // If disabled, always return null (skip all lastNotified checks)
+  if (!ENABLE_LAST_NOTIFIED) {
+    return null;
+  }
+  
   const em = (store as unknown as { em: () => EntityManager }).em()
   const result = await em.query(
     "SELECT last_notified FROM public.squids WHERE name = $1",
@@ -19,6 +28,11 @@ export async function getLastNotified(store: Store): Promise<bigint | null> {
 }
 
 export async function setLastNotified(store: Store, timestamp: bigint) {
+  // If disabled, skip the update entirely
+  if (!ENABLE_LAST_NOTIFIED) {
+    return;
+  }
+  
   const em = (store as unknown as { em: () => EntityManager }).em()
   await em.query(
     "UPDATE public.squids SET last_notified = $1 WHERE name = $2",
