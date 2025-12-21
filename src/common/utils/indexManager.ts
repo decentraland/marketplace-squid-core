@@ -7,16 +7,19 @@
 
 import { EntityManager } from 'typeorm';
 
-// Indices to drop during bulk indexing (excluding UNIQUE constraints and PKs)
+// Indices to drop during bulk indexing
+// IMPORTANT: Do NOT include:
+// - Primary Keys (PK_*)
+// - UNIQUE constraints that support Foreign Keys (REL_*, IDX_* for parcel_id, estate_id, etc.)
+// - Any index that has a constraint depending on it
 // Grouped by priority - heaviest tables first
 export const DROPPABLE_INDICES = {
-  // NFT - heaviest table, most indices
+  // NFT - heaviest table, most indices (excluding FK constraint indices)
   nft: [
     { name: 'IDX_5f8cc4778564d0bd3c4ac3436d', create: `CREATE INDEX "IDX_5f8cc4778564d0bd3c4ac3436d" ON "nft" ("search_order_status", "search_order_expires_at", "category")` },
     { name: 'IDX_d5b8837a62eb6d9c95eb3d2ef2', create: `CREATE INDEX "IDX_d5b8837a62eb6d9c95eb3d2ef2" ON "nft" ("search_order_status", "search_order_expires_at", "network")` },
     { name: 'IDX_26e756121a20d1cc3e4d738279', create: `CREATE INDEX "IDX_26e756121a20d1cc3e4d738279" ON "nft" ("owner_address")` },
     { name: 'IDX_0fca1a8c5d9399d9a9a52e26f7', create: `CREATE INDEX "IDX_0fca1a8c5d9399d9a9a52e26f7" ON "nft" ("contract_address", "token_id")` },
-    { name: 'IDX_83603c168bc00b20544539fbea', create: `CREATE INDEX "IDX_83603c168bc00b20544539fbea" ON "account" ("address")` },
     { name: 'IDX_3baa214ec3db0ce29708750e3b', create: `CREATE INDEX "IDX_3baa214ec3db0ce29708750e3b" ON "nft" ("category")` },
     { name: 'IDX_e0e405184c1c9253bbe95b6cc7', create: `CREATE INDEX "IDX_e0e405184c1c9253bbe95b6cc7" ON "nft" ("search_order_expires_at_normalized")` },
     { name: 'IDX_b53fdf02d6f6047c1758ae885a', create: `CREATE INDEX "IDX_b53fdf02d6f6047c1758ae885a" ON "nft" ("search_is_land")` },
@@ -29,16 +32,7 @@ export const DROPPABLE_INDICES = {
     { name: 'IDX_c36d2ea36d7de5e265c30b8be8', create: `CREATE INDEX "IDX_c36d2ea36d7de5e265c30b8be8" ON "nft" ("metadata_id")` },
     { name: 'IDX_83cfd3a290ed70c660f8c9dfe2', create: `CREATE INDEX "IDX_83cfd3a290ed70c660f8c9dfe2" ON "nft" ("owner_id")` },
     { name: 'IDX_b92ac830e4b3a630162a898203', create: `CREATE INDEX "IDX_b92ac830e4b3a630162a898203" ON "nft" ("active_order_id")` },
-    // UNIQUE indices for FK relations - these also slow down upserts
-    { name: 'IDX_31459100f31150048a6d5fda2a', create: `CREATE UNIQUE INDEX "IDX_31459100f31150048a6d5fda2a" ON "nft" ("parcel_id")` },
-    { name: 'IDX_c93c3ba3d64f3ac7dca84ef45b', create: `CREATE UNIQUE INDEX "IDX_c93c3ba3d64f3ac7dca84ef45b" ON "nft" ("estate_id")` },
-    { name: 'IDX_2d559d06edaadb3c3facd8159c', create: `CREATE UNIQUE INDEX "IDX_2d559d06edaadb3c3facd8159c" ON "nft" ("wearable_id")` },
-    { name: 'IDX_070ce4690a766ec56a00acc7e0', create: `CREATE UNIQUE INDEX "IDX_070ce4690a766ec56a00acc7e0" ON "nft" ("ens_id")` },
-    // REL_ constraints (TypeORM relation indices) - same as above but with different prefix
-    { name: 'REL_31459100f31150048a6d5fda2a', create: `CREATE UNIQUE INDEX "REL_31459100f31150048a6d5fda2a" ON "nft" ("parcel_id")` },
-    { name: 'REL_c93c3ba3d64f3ac7dca84ef45b', create: `CREATE UNIQUE INDEX "REL_c93c3ba3d64f3ac7dca84ef45b" ON "nft" ("estate_id")` },
-    { name: 'REL_2d559d06edaadb3c3facd8159c', create: `CREATE UNIQUE INDEX "REL_2d559d06edaadb3c3facd8159c" ON "nft" ("wearable_id")` },
-    { name: 'REL_070ce4690a766ec56a00acc7e0', create: `CREATE UNIQUE INDEX "REL_070ce4690a766ec56a00acc7e0" ON "nft" ("ens_id")` },
+    // NOTE: IDX/REL for parcel_id, estate_id, wearable_id, ens_id are FK constraints - cannot drop!
   ],
   
   // Order - second heaviest
@@ -157,6 +151,7 @@ export function checkIfNearHead(currentBlock: number, chainHead: number, thresho
 
 /**
  * Drop all non-essential indices for faster bulk loading
+ * Note: We drop indices one by one to avoid transaction abort issues
  */
 export async function dropIndicesForBulkLoad(em: EntityManager): Promise<void> {
   if (indicesDropped) {
@@ -170,21 +165,45 @@ export async function dropIndicesForBulkLoad(em: EntityManager): Promise<void> {
   const startTime = performance.now();
   let dropped = 0;
   let skipped = 0;
+  let transactionAborted = false;
   
   for (const idx of indices) {
+    // If transaction is already aborted, just count as skipped
+    if (transactionAborted) {
+      skipped++;
+      continue;
+    }
+    
     try {
       await em.query(`DROP INDEX IF EXISTS "${idx.name}"`);
       dropped++;
     } catch (e: any) {
-      // Index might not exist or be in use
-      console.log(`   ⚠️ Could not drop ${idx.name}: ${e.message}`);
-      skipped++;
+      // Check if this is a constraint dependency error
+      if (e.message.includes('requires it') || e.message.includes('constraint')) {
+        console.log(`   ⚠️ ${idx.name} is a constraint, cannot drop`);
+        skipped++;
+        // This might abort the transaction
+        if (e.message.includes('transaction is aborted')) {
+          transactionAborted = true;
+        }
+      } else if (e.message.includes('transaction is aborted')) {
+        // Transaction was aborted by a previous error
+        transactionAborted = true;
+        skipped++;
+      } else {
+        console.log(`   ⚠️ Could not drop ${idx.name}: ${e.message}`);
+        skipped++;
+      }
     }
   }
   
   const duration = performance.now() - startTime;
-  console.log(`⚡ Dropped ${dropped} indices (${skipped} skipped) in ${(duration/1000).toFixed(1)}s`);
-  indicesDropped = true;
+  if (transactionAborted) {
+    console.log(`⚡ ⚠️ Transaction was aborted after dropping ${dropped} indices. This is OK - indices will be dropped on next restart.`);
+  } else {
+    console.log(`⚡ Dropped ${dropped} indices (${skipped} skipped) in ${(duration/1000).toFixed(1)}s`);
+  }
+  indicesDropped = dropped > 0;
 }
 
 /**
