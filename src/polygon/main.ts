@@ -460,7 +460,20 @@ processor.run(
       getStoreContractData(ctx, lastBlockHeader),
     ]);
 
-    // ⚡ OPTIMIZATION: Pre-index logs by transactionIndex for O(1) lookups (avoid O(n²) loops)
+    // ⚡ OPTIMIZATION: Helper to push to Map<K, V[]> without O(n²) spread
+    // Instead of: map.set(key, [...(map.get(key) || []), value])  ← O(n) per call = O(n²) total
+    // Use: pushToMapArray(map, key, value)  ← O(1) per call = O(n) total
+    function pushToMapArray<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+      let arr = map.get(key);
+      if (!arr) {
+        arr = [];
+        map.set(key, arr);
+      }
+      arr.push(value);
+    }
+
+    // ⚡ OPTIMIZATION: Single pre-processing loop for all indexing needs
+    // Previously we had 3 separate loops - now fused into 1
     const preIndexStart = performance.now();
 
     // Index: blockHeight-txIndex -> CreditUsed events
@@ -470,51 +483,58 @@ processor.run(
     >();
     // Index: blockHeight-txIndex -> OrderCreated orderHash
     const orderHashByTx = new Map<string, string>();
+    // Collect ProxyCreated events for multicall
+    const proxyCreatedEvents: { address: string; blockHeader: any }[] = [];
+
+    // Pre-compute lowercase addresses for O(1) lookup (avoid repeated .toLowerCase() in loop)
+    const creditsManagerAddresses = new Set(
+      addresses.CreditsManager.map((a: string) => a.toLowerCase())
+    );
+    const collectionFactoryAddresses = new Set(
+      [addresses.CollectionFactory, addresses.CollectionFactoryV3].map((c) =>
+        c.toLowerCase()
+      )
+    );
+    const spokeAddressLower = addresses.Spoke?.toLowerCase();
 
     for (let block of ctx.blocks) {
       for (let log of block.logs) {
-        const txKey = `${block.header.height}-${log.transactionIndex}`;
+        const topic = log.topics[0];
+        const logAddressLower = log.address.toLowerCase();
 
-        // Index CreditUsed events
+        // 1. Index CreditUsed events
         if (
-          log.topics[0] === CreditsManagerABI.events.CreditUsed.topic &&
-          addresses.CreditsManager.map((a: string) => a.toLowerCase()).includes(
-            log.address.toLowerCase()
-          )
+          topic === CreditsManagerABI.events.CreditUsed.topic &&
+          creditsManagerAddresses.has(logAddressLower)
         ) {
+          const txKey = `${block.header.height}-${log.transactionIndex}`;
           const creditEvent = CreditsManagerABI.events.CreditUsed.decode(log);
-          if (!creditEventsByTx.has(txKey)) {
-            creditEventsByTx.set(txKey, []);
+          let credits = creditEventsByTx.get(txKey);
+          if (!credits) {
+            credits = [];
+            creditEventsByTx.set(txKey, credits);
           }
-          creditEventsByTx.get(txKey)!.push({
+          credits.push({
             creditId: creditEvent._creditId,
             value: creditEvent._value,
           });
         }
 
-        // Index OrderCreated events
+        // 2. Index Spoke OrderCreated events
         if (
-          log.topics[0] === SpokeABI.events.OrderCreated.topic &&
-          log.address.toLowerCase() === addresses.Spoke?.toLowerCase()
+          topic === SpokeABI.events.OrderCreated.topic &&
+          logAddressLower === spokeAddressLower
         ) {
+          const txKey = `${block.header.height}-${log.transactionIndex}`;
           const orderCreatedEvent = SpokeABI.events.OrderCreated.decode(log);
           orderHashByTx.set(txKey, orderCreatedEvent.orderHash);
         }
-      }
-    }
 
-    // ⚡ OPTIMIZATION: Collect all ProxyCreated events FIRST for parallel owner() fetching
-    const proxyCreatedEvents: { address: string; blockHeader: any }[] = [];
-
-    for (let block of ctx.blocks) {
-      for (let log of block.logs) {
-        const topic = log.topics[0];
+        // 3. Collect ProxyCreated for multicall
         if (
           (topic === CollectionFactoryABI.events.ProxyCreated.topic ||
             topic === CollectionFactoryV3ABI.events.ProxyCreated.topic) &&
-          [addresses.CollectionFactory, addresses.CollectionFactoryV3]
-            .map((c) => c.toLowerCase())
-            .includes(log.address)
+          collectionFactoryAddresses.has(logAddressLower)
         ) {
           const event =
             topic === CollectionFactoryABI.events.ProxyCreated.topic
@@ -562,6 +582,10 @@ processor.run(
     const eventTypeTimes: Record<string, number> = {};
     const accumulationLoopStart = performance.now();
 
+    // ⚡ DEBUG: Track skipped vs processed events
+    let skippedTransfers = 0;
+    let processedTransfers = 0;
+
     // ⚡ OPTIMIZATION: Pre-compute topicToName ONCE (not 19000 times)
     const topicToName: Record<string, string> = {
       [CollectionFactoryABI.events.ProxyCreated.topic]: "ProxyCreated",
@@ -581,14 +605,42 @@ processor.run(
     // Track time spent BEFORE eventStart (BigInt operations, etc)
     let preEventTime = 0;
 
+    // ⚡ OPTIMIZATION: Create rarities snapshot ONCE, only update when rarities change
+    // This reduces from O(n*m) to O(k*m) where n=events, m=rarities, k=rarity-changing events
+    let currentRaritiesSnapshot: Map<string, Rarity> = new Map(
+      Array.from(rarities).map(([k, v]) => [k, { ...v } as Rarity])
+    );
+    let raritiesSnapshotDirty = false;
+
+    // ⚡ OPTIMIZATION: Pre-compute valid collections Set ONCE for O(1) lookup
+    // Previously: [...preloadedCollections, ...collectionIdsNotIncludedInPreloaded, ...collectionIdsCreatedInBatch].includes(addr)
+    // was O(n) per event × 63k events = millions of operations!
+    // Now: O(1) Set.has() lookup
+    const validCollections = new Set<string>([
+      ...preloadedCollections,
+      ...collectionIdsNotIncludedInPreloaded,
+    ]);
+    // collectionIdsCreatedInBatch is added dynamically during the loop
+
     for (let block of ctx.blocks) {
       // ⚡ OPTIMIZATION: Cache block timestamp conversion ONCE per block
       const blockTimestamp = BigInt(block.header.timestamp / 1000);
       const dayId = (blockTimestamp / BigInt(86400)).toString();
 
       for (let log of block.logs) {
-        const preStart = performance.now();
         const topic = log.topics[0];
+
+        // ⚡ FAST PATH: Skip non-DCL Transfer events BEFORE any other processing
+        // This avoids performance.now() calls, switch overhead, etc for 99%+ of events
+        // Transfer is the most common event in blockchain - we get 84k+ per batch from ALL contracts
+        if (topic === CollectionV2ABI.events.Transfer.topic) {
+          if (!validCollections.has(log.address)) {
+            skippedTransfers++;
+            continue; // Skip entirely - don't even count time
+          }
+        }
+
+        const preStart = performance.now();
         const analyticDayDataId = `${dayId}-${ModelNetwork.POLYGON}`;
         metrics.eventsProcessed++;
         preEventTime += performance.now() - preStart;
@@ -615,6 +667,7 @@ processor.run(
                 : CollectionFactoryV3ABI.events.ProxyCreated.decode(log);
 
             collectionIdsCreatedInBatch.add(event._address);
+            validCollections.add(event._address); // ⚡ Add to valid collections Set for O(1) lookup
 
             // ⚡ OPTIMIZATION: Use pre-fetched data from multicall (O(1) lookup)
             const prefetched = prefetchedCollectionData.get(
@@ -705,10 +758,7 @@ processor.run(
             }
 
             const event = MarketplaceABI.events.OrderCreated.decode(log);
-            tokenIds.set(event.nftAddress, [
-              ...(tokenIds.get(event.nftAddress) || []),
-              event.assetId,
-            ]);
+            pushToMapArray(tokenIds, event.nftAddress, event.assetId);
 
             // ⚡ Use pre-cached contract data instead of awaiting
             events.push({
@@ -735,10 +785,7 @@ processor.run(
               break;
             }
             const event = MarketplaceABI.events.OrderSuccessful.decode(log);
-            tokenIds.set(event.nftAddress, [
-              ...(tokenIds.get(event.nftAddress) || []),
-              event.assetId,
-            ]);
+            pushToMapArray(tokenIds, event.nftAddress, event.assetId);
             accountIds.add(event.seller); // load sellers acount to update metrics
             accountIds.add(event.buyer); // load buyers acount to update metrics
             analyticsIds.add(analyticDayDataId);
@@ -770,10 +817,7 @@ processor.run(
               break;
             }
             const event = MarketplaceABI.events.OrderCancelled.decode(log);
-            tokenIds.set(event.nftAddress, [
-              ...(tokenIds.get(event.nftAddress) || []),
-              event.assetId,
-            ]);
+            pushToMapArray(tokenIds, event.nftAddress, event.assetId);
             // ⚡ Use pre-cached contract data
             events.push({
               topic,
@@ -789,10 +833,7 @@ processor.run(
           // bid events
           case ERC721BidABI.events.BidCreated.topic: {
             const event = ERC721BidABI.events.BidCreated.decode(log);
-            tokenIds.set(event._tokenAddress, [
-              ...(tokenIds.get(event._tokenAddress) || []),
-              event._tokenId,
-            ]);
+            pushToMapArray(tokenIds, event._tokenAddress, event._tokenId);
 
             // ⚡ Use pre-cached contract data
             events.push({
@@ -816,10 +857,7 @@ processor.run(
             accountIds.add(event._seller); // load sellers acount to update metrics
             accountIds.add(event._bidder); // load buyers acount to update metrics
             bidIds.add(bidId);
-            tokenIds.set(event._tokenAddress, [
-              ...(tokenIds.get(event._tokenAddress) || []),
-              event._tokenId,
-            ]);
+            pushToMapArray(tokenIds, event._tokenAddress, event._tokenId);
             analyticsIds.add(analyticDayDataId);
             // Add itemDayData ID placeholder for this NFT bid sale
             const dayIDBid = blockTimestamp / BigInt(86400);
@@ -846,10 +884,7 @@ processor.run(
               event._bidder
             );
             bidIds.add(bidId);
-            tokenIds.set(event._tokenAddress, [
-              ...(tokenIds.get(event._tokenAddress) || []),
-              event._tokenId,
-            ]);
+            pushToMapArray(tokenIds, event._tokenAddress, event._tokenId);
             // ⚡ Use pre-cached contract data
             events.push({
               topic: ERC721BidABI.events.BidCancelled.topic,
@@ -909,16 +944,13 @@ processor.run(
           case CollectionV2ABI.events.CreatorshipTransferred.topic:
           case CollectionV2ABI.events.OwnershipTransferred.topic:
           case CollectionV2ABI.events.Transfer.topic: {
-            // @TODO check addresses
-            if (
-              ![
-                ...preloadedCollections, // collections already pre-calculated
-                ...collectionIdsNotIncludedInPreloaded, // collections not included in the preloaded list but yes in the db (newest ones)
-                ...collectionIdsCreatedInBatch, // collections created in the current batch, will later by saved in the db
-              ].includes(log.address)
-            ) {
+            // ⚡ NOTE: Non-DCL Transfers are filtered BEFORE the switch (fast path above)
+            // If we get here, this IS a valid DCL collection transfer
+            if (!validCollections.has(log.address)) {
+              // Should not happen - but just in case, skip
               break;
             }
+            processedTransfers++;
             let event;
 
             switch (topic) {
@@ -943,10 +975,7 @@ processor.run(
                 break;
               case CollectionV2ABI.events.UpdateItemData.topic:
                 event = CollectionV2ABI.events.UpdateItemData.decode(log);
-                itemIds.set(log.address, [
-                  ...(itemIds.get(log.address) || []),
-                  event._itemId,
-                ]);
+                pushToMapArray(itemIds, log.address, event._itemId);
                 break;
               case CollectionV2ABI.events.Issue.topic: {
                 event = CollectionV2ABI.events.Issue.decode(log);
@@ -957,10 +986,7 @@ processor.run(
                 const itemId = `${log.address}-${event._itemId}`;
                 const itemDayDataId = `${dayID.toString()}-${itemId}`;
                 itemDayDataIds.add(itemDayDataId);
-                itemIds.set(log.address, [
-                  ...(itemIds.get(log.address) || []),
-                  event._itemId,
-                ]);
+                pushToMapArray(itemIds, log.address, event._itemId);
                 // account for creator
                 // we need to load item creators, seller and royalties accounts
                 // we also need the feeCollector account
@@ -987,10 +1013,8 @@ processor.run(
                 accountIds.add(event.to.toLowerCase());
                 const timestamp = block.header.timestamp / 1000;
                 const nftId = getNFTId(log.address, event.tokenId.toString());
-                tokenIds.set(log.address, [
-                  ...(tokenIds.get(log.address) || []),
-                  event.tokenId,
-                ]);
+                // ⚡ OPTIMIZATION: Use pushToMapArray() to avoid O(n²) spread
+                pushToMapArray(tokenIds, log.address, event.tokenId);
                 transfers.set(
                   `${nftId}-${timestamp}`,
                   new Transfer({
@@ -1008,9 +1032,13 @@ processor.run(
               }
             }
             if (event) {
-              const raritiesCopy = new Map(
-                Array.from(rarities).map(([k, v]) => [k, { ...v }])
-              );
+              // ⚡ OPTIMIZATION: Only refresh snapshot if rarities changed since last snapshot
+              if (raritiesSnapshotDirty) {
+                currentRaritiesSnapshot = new Map(
+                  Array.from(rarities).map(([k, v]) => [k, { ...v } as Rarity])
+                );
+                raritiesSnapshotDirty = false;
+              }
               collectionIds.add(log.address.toLowerCase()); // @TODO check lowercase if needed
               // ⚡ Use pre-cached store contract data
               events.push({
@@ -1019,8 +1047,8 @@ processor.run(
                 block,
                 log,
                 transaction: log.transaction,
-                // make a copy of rarities so it has an snapshot at this block
-                rarities: raritiesCopy,
+                // Use the current snapshot (only refreshed when rarities actually change)
+                rarities: currentRaritiesSnapshot,
                 storeContractData: cachedStoreData,
               });
             } else {
@@ -1035,6 +1063,7 @@ processor.run(
               event,
               log.address === addresses.Rarity ? Currency.MANA : Currency.USD
             );
+            raritiesSnapshotDirty = true; // Mark snapshot as needing refresh
             break;
           }
           case RaritiesABI.events.UpdatePrice.topic: {
@@ -1044,6 +1073,7 @@ processor.run(
               event,
               log.address === addresses.Rarity ? Currency.MANA : Currency.USD
             );
+            raritiesSnapshotDirty = true; // Mark snapshot as needing refresh
             break;
           }
           case CollectionStoreABI.events.SetFee.topic: {
@@ -1065,6 +1095,7 @@ processor.run(
             metrics.rpcCalls.rarity++;
             metrics.rpcTime.rarity += rpcRarityDuration;
             metrics.rpcTime.total += rpcRarityDuration;
+            raritiesSnapshotDirty = true; // Mark snapshot as needing refresh
             break;
           }
           case MarketplaceV3ABI.events.Traded.topic: {
@@ -1093,10 +1124,7 @@ processor.run(
             collectionIds.add(collectionAddress);
 
             if (tokenId) {
-              tokenIds.set(collectionAddress, [
-                ...(tokenIds.get(collectionAddress) || []),
-                tokenId,
-              ]);
+              pushToMapArray(tokenIds, collectionAddress, tokenId);
             } else {
               console.log("ERROR: tokenId not found in trade event data");
               break;
@@ -1118,6 +1146,13 @@ processor.run(
               itemDayDataIds.add(tempItemDayDataIdTrade);
             }
 
+            // ⚡ OPTIMIZATION: Only refresh snapshot if rarities changed since last snapshot
+            if (raritiesSnapshotDirty) {
+              currentRaritiesSnapshot = new Map(
+                Array.from(rarities).map(([k, v]) => [k, { ...v } as Rarity])
+              );
+              raritiesSnapshotDirty = false;
+            }
             // ⚡ Use pre-cached store contract data
             events.push({
               topic,
@@ -1125,10 +1160,8 @@ processor.run(
               block,
               log,
               transaction: log.transaction,
-              // make a copy of rarities so it has an snapshot at this block
-              rarities: new Map(
-                Array.from(rarities).map(([k, v]) => [k, { ...v }])
-              ),
+              // Use the current snapshot (only refreshed when rarities actually change)
+              rarities: currentRaritiesSnapshot,
               storeContractData: cachedStoreData,
             });
 
@@ -1512,6 +1545,16 @@ processor.run(
         )}, processEvents=${fmt(metrics.eventLoopBreakdown.collectionEvents)}`
       );
       console.log(`   └─ Events: ${topEvents}`);
+      // ⚡ DEBUG: Show skipped vs processed transfers
+      if (skippedTransfers > 0 || processedTransfers > 0) {
+        const skipPct = (
+          (skippedTransfers / (skippedTransfers + processedTransfers)) *
+          100
+        ).toFixed(1);
+        console.log(
+          `   └─ Transfers: ${processedTransfers} processed, ${skippedTransfers} skipped (${skipPct}% filtered out)`
+        );
+      }
     }
 
     // ⚡ DB UPSERTS - use extracted function

@@ -29,6 +29,16 @@ export const DROPPABLE_INDICES = {
     { name: 'IDX_c36d2ea36d7de5e265c30b8be8', create: `CREATE INDEX "IDX_c36d2ea36d7de5e265c30b8be8" ON "nft" ("metadata_id")` },
     { name: 'IDX_83cfd3a290ed70c660f8c9dfe2', create: `CREATE INDEX "IDX_83cfd3a290ed70c660f8c9dfe2" ON "nft" ("owner_id")` },
     { name: 'IDX_b92ac830e4b3a630162a898203', create: `CREATE INDEX "IDX_b92ac830e4b3a630162a898203" ON "nft" ("active_order_id")` },
+    // UNIQUE indices for FK relations - these also slow down upserts
+    { name: 'IDX_31459100f31150048a6d5fda2a', create: `CREATE UNIQUE INDEX "IDX_31459100f31150048a6d5fda2a" ON "nft" ("parcel_id")` },
+    { name: 'IDX_c93c3ba3d64f3ac7dca84ef45b', create: `CREATE UNIQUE INDEX "IDX_c93c3ba3d64f3ac7dca84ef45b" ON "nft" ("estate_id")` },
+    { name: 'IDX_2d559d06edaadb3c3facd8159c', create: `CREATE UNIQUE INDEX "IDX_2d559d06edaadb3c3facd8159c" ON "nft" ("wearable_id")` },
+    { name: 'IDX_070ce4690a766ec56a00acc7e0', create: `CREATE UNIQUE INDEX "IDX_070ce4690a766ec56a00acc7e0" ON "nft" ("ens_id")` },
+    // REL_ constraints (TypeORM relation indices) - same as above but with different prefix
+    { name: 'REL_31459100f31150048a6d5fda2a', create: `CREATE UNIQUE INDEX "REL_31459100f31150048a6d5fda2a" ON "nft" ("parcel_id")` },
+    { name: 'REL_c93c3ba3d64f3ac7dca84ef45b', create: `CREATE UNIQUE INDEX "REL_c93c3ba3d64f3ac7dca84ef45b" ON "nft" ("estate_id")` },
+    { name: 'REL_2d559d06edaadb3c3facd8159c', create: `CREATE UNIQUE INDEX "REL_2d559d06edaadb3c3facd8159c" ON "nft" ("wearable_id")` },
+    { name: 'REL_070ce4690a766ec56a00acc7e0', create: `CREATE UNIQUE INDEX "REL_070ce4690a766ec56a00acc7e0" ON "nft" ("ens_id")` },
   ],
   
   // Order - second heaviest
