@@ -327,13 +327,19 @@ processor.run(
     // ⚡ BULK INDEX MODE: Drop indices on first batch if enabled
     if (BULK_INDEX_MODE && !bulkModeInitialized) {
       bulkModeInitialized = true;
-      const em = (
-        ctx.store as unknown as { em: () => import("typeorm").EntityManager }
-      ).em();
-      console.log(
-        "⚡ BULK INDEX MODE enabled - dropping indices for faster indexing..."
-      );
-      await dropIndicesForBulkLoad(em);
+      try {
+        const em = (
+          ctx.store as unknown as { em: () => import("typeorm").EntityManager }
+        ).em();
+        console.log(
+          "⚡ BULK INDEX MODE enabled - dropping indices for faster indexing..."
+        );
+        await dropIndicesForBulkLoad(em);
+      } catch (e: any) {
+        console.log(`⚠️ Error dropping indices: ${e.message}`);
+        console.log("   Continuing without dropping indices...");
+        // Don't throw - allow the squid to continue operating
+      }
     }
 
     // ⚡ OPTIMIZATION 1: Parallelize initial DB queries
@@ -526,8 +532,12 @@ processor.run(
           logAddressLower === spokeAddressLower
         ) {
           const txKey = `${block.header.height}-${log.transactionIndex}`;
+          console.log("Spoke OrderCreated event:", log);
           const orderCreatedEvent = SpokeABI.events.OrderCreated.decode(log);
           orderHashByTx.set(txKey, orderCreatedEvent.orderHash);
+          console.log(
+            `Order saved in tx ${txKey}: ${orderCreatedEvent.orderHash}`
+          );
         }
 
         // 3. Collect ProxyCreated for multicall
@@ -706,6 +716,14 @@ processor.run(
               (sum, c) => sum + c.value,
               BigInt(0)
             );
+            console.log(`
+              Used credits: ${usedCredits}
+              Order hash: ${orderHash}
+              Credit events length: ${creditEvents.length}
+              Credit value: ${creditValue}
+              txKey: ${txKey}
+              txHash: ${log.transactionHash}
+            `);
 
             // If credits were used and we have an orderHash, create SquidRouterOrder
             if (usedCredits && orderHash && creditEvents.length > 0) {
@@ -1650,11 +1668,17 @@ processor.run(
     // Check if we're within 100 blocks of the chain head (ctx.isHead is true when at tip)
     if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
       indicesRecreated = true;
-      const em = (
-        ctx.store as unknown as { em: () => import("typeorm").EntityManager }
-      ).em();
-      console.log("⚡ Caught up with chain head! Recreating indices...");
-      await recreateIndices(em);
+      try {
+        const em = (
+          ctx.store as unknown as { em: () => import("typeorm").EntityManager }
+        ).em();
+        console.log("⚡ Caught up with chain head! Recreating indices...");
+        await recreateIndices(em);
+      } catch (e: any) {
+        console.log(`⚠️ Error recreating indices: ${e.message}`);
+        console.log("   Indices can be recreated manually or on next restart.");
+        // Don't throw - allow the squid to continue operating
+      }
     }
   }
 );

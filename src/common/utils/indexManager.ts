@@ -208,6 +208,7 @@ export async function dropIndicesForBulkLoad(em: EntityManager): Promise<void> {
 
 /**
  * Recreate all indices (call when caught up with chain head)
+ * Note: We use regular CREATE INDEX (not CONCURRENTLY) because we're inside a transaction
  */
 export async function recreateIndices(em: EntityManager): Promise<void> {
   if (!indicesDropped) {
@@ -220,13 +221,23 @@ export async function recreateIndices(em: EntityManager): Promise<void> {
   
   const startTime = performance.now();
   let created = 0;
+  let skipped = 0;
   let failed = 0;
+  let transactionAborted = false;
   
   for (const idx of indices) {
+    // If transaction is already aborted, just count as failed
+    if (transactionAborted) {
+      failed++;
+      continue;
+    }
+    
     try {
-      // Use CONCURRENTLY to avoid blocking reads
-      const concurrentCreate = idx.create.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY');
-      await em.query(concurrentCreate);
+      // Note: Cannot use CONCURRENTLY inside a transaction block
+      // Using regular CREATE INDEX IF NOT EXISTS
+      const createStatement = idx.create.replace('CREATE INDEX', 'CREATE INDEX IF NOT EXISTS')
+                                        .replace('CREATE UNIQUE INDEX', 'CREATE UNIQUE INDEX IF NOT EXISTS');
+      await em.query(createStatement);
       created++;
       if (created % 10 === 0) {
         console.log(`   ✅ Created ${created}/${indices.length} indices...`);
@@ -234,7 +245,11 @@ export async function recreateIndices(em: EntityManager): Promise<void> {
     } catch (e: any) {
       // Index might already exist
       if (e.message.includes('already exists')) {
-        created++;
+        skipped++;
+      } else if (e.message.includes('transaction is aborted')) {
+        transactionAborted = true;
+        failed++;
+        console.log(`   ⚠️ Transaction aborted, cannot create remaining indices`);
       } else {
         console.log(`   ⚠️ Could not create ${idx.name}: ${e.message}`);
         failed++;
@@ -243,7 +258,12 @@ export async function recreateIndices(em: EntityManager): Promise<void> {
   }
   
   const duration = performance.now() - startTime;
-  console.log(`⚡ Created ${created} indices (${failed} failed) in ${(duration/1000).toFixed(1)}s`);
+  if (transactionAborted) {
+    console.log(`⚡ ⚠️ Transaction was aborted. Created ${created} indices, ${skipped} already existed, ${failed} failed.`);
+    console.log(`   Indices will be recreated on next restart or can be created manually.`);
+  } else {
+    console.log(`⚡ Created ${created} indices (${skipped} already existed, ${failed} failed) in ${(duration/1000).toFixed(1)}s`);
+  }
   indicesDropped = false;
 }
 
