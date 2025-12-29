@@ -526,18 +526,14 @@ processor.run(
           });
         }
 
-        // 2. Index Spoke OrderCreated events
+        // 2. Index Spoke OrderCreated events (for cross-chain operations like NAME registration)
         if (
           topic === SpokeABI.events.OrderCreated.topic &&
           logAddressLower === spokeAddressLower
         ) {
           const txKey = `${block.header.height}-${log.transactionIndex}`;
-          console.log("Spoke OrderCreated event:", log);
           const orderCreatedEvent = SpokeABI.events.OrderCreated.decode(log);
           orderHashByTx.set(txKey, orderCreatedEvent.orderHash);
-          console.log(
-            `Order saved in tx ${txKey}: ${orderCreatedEvent.orderHash}`
-          );
         }
 
         // 3. Collect ProxyCreated for multicall
@@ -716,36 +712,12 @@ processor.run(
               (sum, c) => sum + c.value,
               BigInt(0)
             );
-            console.log(`
-              Used credits: ${usedCredits}
-              Order hash: ${orderHash}
-              Credit events length: ${creditEvents.length}
-              Credit value: ${creditValue}
-              txKey: ${txKey}
-              txHash: ${log.transactionHash}
-            `);
-
-            // If credits were used and we have an orderHash, create SquidRouterOrder
-            if (usedCredits && orderHash && creditEvents.length > 0) {
-              const squidRouterOrder = new SquidRouterOrder({
-                id: orderHash,
-                orderHash,
-                creditIds: creditEvents.map((c) => c.creditId),
-                totalCreditsUsed: creditValue,
-                txHash: log.transactionHash,
-                blockNumber: BigInt(block.header.height),
-                timestamp: BigInt(block.header.timestamp / 1000),
-                network: ModelNetwork.POLYGON,
-              });
-
-              squidRouterOrders.set(orderHash, squidRouterOrder);
-
+            // Note: Collection creations with credits are NOT cross-chain
+            // SquidRouterOrders are created separately for cross-chain operations
+            // (e.g., NAME registration that bridges from Polygon to Ethereum)
+            if (usedCredits) {
               ctx.log.info(
-                `SquidRouterOrder created for collection ${event._address}: orderHash ${orderHash}, ${creditEvents.length} credits used, total value ${creditValue} wei`
-              );
-            } else if (usedCredits) {
-              ctx.log.info(
-                `Credits detected for collection ${event._address}: ${creditValue} wei (no Squid Router order)`
+                `Credits detected for collection ${event._address}: ${creditValue} wei (collection creation, not cross-chain)`
               );
             }
 
@@ -1573,6 +1545,73 @@ processor.run(
           `   └─ Transfers: ${processedTransfers} processed, ${skippedTransfers} skipped (${skipPct}% filtered out)`
         );
       }
+    }
+
+    // ⚡ CREATE SQUID ROUTER ORDERS for cross-chain operations
+    // These are created when there's a CreditUsed + Spoke.OrderCreated in the same transaction
+    // This is for cross-chain operations like NAME registration (not collection creation)
+    let squidRouterOrdersCreated = 0;
+    for (const [txKey, orderHash] of orderHashByTx.entries()) {
+      console.log(
+        `Creating SquidRouterOrder for tx ${txKey} and order hash ${orderHash}`
+      );
+      const creditEvents = creditEventsByTx.get(txKey);
+
+      // Only create SquidRouterOrder if there are credits used AND an order was created
+      if (creditEvents && creditEvents.length > 0) {
+        // Calculate total credit value
+        const totalCreditValue = creditEvents.reduce(
+          (sum, c) => sum + c.value,
+          BigInt(0)
+        );
+
+        // Parse txKey to get block and tx info (format: "blockHeight-txIndex")
+        const [blockHeightStr] = txKey.split("-");
+        const blockHeight = parseInt(blockHeightStr, 10);
+
+        // Find the block to get timestamp and txHash
+        const block = ctx.blocks.find((b) => b.header.height === blockHeight);
+        if (!block) {
+          console.log(
+            `⚠️ [SquidRouter] Could not find block ${blockHeight} for order ${orderHash}`
+          );
+          continue;
+        }
+
+        // Find a log in this transaction to get the txHash
+        const txIndex = parseInt(txKey.split("-")[1], 10);
+        const logInTx = block.logs.find((l) => l.transactionIndex === txIndex);
+        const txHash = logInTx?.transactionHash || "unknown";
+
+        const squidRouterOrder = new SquidRouterOrder({
+          id: orderHash,
+          orderHash,
+          creditIds: creditEvents.map((c) => c.creditId),
+          totalCreditsUsed: totalCreditValue,
+          txHash,
+          blockNumber: BigInt(blockHeight),
+          timestamp: BigInt(block.header.timestamp / 1000),
+          network: ModelNetwork.POLYGON,
+        });
+
+        squidRouterOrders.set(orderHash, squidRouterOrder);
+        squidRouterOrdersCreated++;
+
+        console.log(
+          `✅ [SquidRouter] Created order: hash=${orderHash.slice(
+            0,
+            18
+          )}..., credits=${
+            creditEvents.length
+          }, value=${totalCreditValue}, txHash=${txHash.slice(0, 18)}...`
+        );
+      }
+    }
+
+    if (squidRouterOrdersCreated > 0) {
+      console.log(
+        `📦 [SquidRouter] Created ${squidRouterOrdersCreated} SquidRouterOrders in this batch`
+      );
     }
 
     // ⚡ DB UPSERTS - use extracted function
