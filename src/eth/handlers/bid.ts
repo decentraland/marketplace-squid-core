@@ -9,6 +9,7 @@ import {
   Bid,
   Category,
   Count,
+  Item,
   NFT,
   OrderStatus,
   AnalyticsDayData,
@@ -89,7 +90,8 @@ export async function handleBidAccepted(
   accounts: Map<string, Account>,
   analytics: Map<string, AnalyticsDayData>,
   counts: Map<string, Count>,
-  sales: Map<string, Sale>
+  sales: Map<string, Sale>,
+  items: Map<string, Item>
 ): Promise<void> {
   const { _bidder, _tokenAddress, _tokenId, _fee, _id, _price, _seller } =
     event;
@@ -132,7 +134,8 @@ export async function handleBidAccepted(
       sales,
       accounts,
       analytics,
-      counts
+      counts,
+      items
     );
   } else {
     console.log("ERROR: NFT not found for bid in accepted: ", id);
