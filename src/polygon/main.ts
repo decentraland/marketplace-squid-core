@@ -44,6 +44,9 @@ import {
   recreateIndices,
   getIndexState,
   checkIfNearHead,
+  checkIndicesNeedRecreation,
+  getIndicesStatus,
+  logIndexConfiguration,
 } from "../common/utils/indexManager";
 import { getAddresses } from "../common/utils/addresses";
 import {
@@ -116,6 +119,7 @@ const BULK_INDEX_MODE = true;
 // const BULK_INDEX_MODE = process.env.BULK_INDEX_MODE === 'true';
 let bulkModeInitialized = false;
 let indicesRecreated = false;
+let indicesNeedRecreation = false; // Will be set on startup check
 
 // 📊 Universal event counter - tracks total events processed across all batches
 let totalEventsProcessed = 0;
@@ -324,20 +328,41 @@ processor.run(
       0
     );
 
-    // ⚡ BULK INDEX MODE: Drop indices on first batch if enabled
+    // ⚡ BULK INDEX MODE: Check index state and drop indices on first batch if enabled
     if (BULK_INDEX_MODE && !bulkModeInitialized) {
       bulkModeInitialized = true;
       try {
         const em = (
           ctx.store as unknown as { em: () => import("typeorm").EntityManager }
         ).em();
-        console.log(
-          "⚡ BULK INDEX MODE enabled - dropping indices for faster indexing..."
-        );
-        await dropIndicesForBulkLoad(em);
+        
+        // Log configuration on startup
+        logIndexConfiguration();
+        
+        // Check if indices need recreation (handles restart case)
+        console.log(`⚡ [Main] BULK INDEX MODE enabled - checking index state...`);
+        console.log(`⚡ [Main] Current block: ${ctx.blocks[0]?.header.height}, isHead: ${ctx.isHead}`);
+        
+        indicesNeedRecreation = await checkIndicesNeedRecreation(em);
+        
+        if (ctx.isHead) {
+          // Already at head - no need to drop, just ensure indices exist
+          console.log(`⚡ [Main] Already at chain head - ensuring indices exist`);
+          if (indicesNeedRecreation) {
+            console.log(`⚡ [Main] Missing indices detected - will recreate now`);
+            await recreateIndices(em);
+            indicesRecreated = true;
+          }
+        } else {
+          // Not at head - drop indices for faster bulk loading
+          console.log(`⚡ [Main] Not at chain head - dropping indices for faster indexing...`);
+          await dropIndicesForBulkLoad(em);
+          indicesNeedRecreation = true; // Mark that we'll need to recreate
+        }
       } catch (e: any) {
-        console.log(`⚠️ Error dropping indices: ${e.message}`);
-        console.log("   Continuing without dropping indices...");
+        console.log(`⚠️ [Main] Error in bulk index mode initialization: ${e.message}`);
+        console.log(`⚠️ [Main] Stack: ${e.stack}`);
+        console.log(`⚠️ [Main] Continuing without index management...`);
         // Don't throw - allow the squid to continue operating
       }
     }
@@ -1706,16 +1731,34 @@ processor.run(
     // ⚡ BULK INDEX MODE: Recreate indices when we're caught up with chain head
     // Check if we're within 100 blocks of the chain head (ctx.isHead is true when at tip)
     if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
-      indicesRecreated = true;
+      console.log(`⚡ [Main] ═══════════════════════════════════════════════════════════`);
+      console.log(`⚡ [Main] 🎉 REACHED CHAIN HEAD - Starting index recreation process`);
+      console.log(`⚡ [Main] Current block: ${ctx.blocks[ctx.blocks.length - 1]?.header.height}`);
+      console.log(`⚡ [Main] indicesNeedRecreation: ${indicesNeedRecreation}`);
+      console.log(`⚡ [Main] ═══════════════════════════════════════════════════════════`);
+      
       try {
         const em = (
           ctx.store as unknown as { em: () => import("typeorm").EntityManager }
         ).em();
-        console.log("⚡ Caught up with chain head! Recreating indices...");
-        await recreateIndices(em);
+        
+        // Check actual DB state before deciding what to do
+        const status = await getIndicesStatus(em);
+        
+        if (status.missingCount === 0) {
+          console.log(`⚡ [Main] All ${status.total} indices already exist - nothing to do`);
+          indicesRecreated = true;
+        } else {
+          console.log(`⚡ [Main] ${status.missingCount}/${status.total} indices missing - recreating...`);
+          await recreateIndices(em);
+          indicesRecreated = true;
+          console.log(`⚡ [Main] Index recreation completed`);
+        }
       } catch (e: any) {
-        console.log(`⚠️ Error recreating indices: ${e.message}`);
-        console.log("   Indices can be recreated manually or on next restart.");
+        console.log(`⚠️ [Main] Error recreating indices: ${e.message}`);
+        console.log(`⚠️ [Main] Stack: ${e.stack}`);
+        console.log(`⚠️ [Main] Indices can be recreated manually or on next restart.`);
+        // Don't set indicesRecreated = true so we retry on next batch
         // Don't throw - allow the squid to continue operating
       }
     }
