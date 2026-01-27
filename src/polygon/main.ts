@@ -345,19 +345,23 @@ processor.run(
         
         indicesNeedRecreation = await checkIndicesNeedRecreation(em);
         
-        if (ctx.isHead) {
-          // Already at head - no need to drop, just ensure indices exist
-          console.log(`⚡ [Main] Already at chain head - ensuring indices exist`);
-          if (indicesNeedRecreation) {
-            console.log(`⚡ [Main] Missing indices detected - will recreate now`);
-            await recreateIndices(em);
-            indicesRecreated = true;
-          }
+        // KEY FIX: If ALL indices exist, the squid already completed initial sync before.
+        // Do NOT drop indices - this handles the restart case for already-synced squids.
+        if (!indicesNeedRecreation) {
+          console.log(`⚡ [Main] All indices exist - squid already completed initial sync previously`);
+          console.log(`⚡ [Main] Skipping index drop - indices will remain intact`);
+          indicesRecreated = true; // Mark as done so we don't try to recreate later
+        } else if (ctx.isHead) {
+          // At head but missing indices - recreate them now
+          console.log(`⚡ [Main] At chain head but missing indices - recreating now`);
+          await recreateIndices(em);
+          indicesRecreated = true;
         } else {
-          // Not at head - drop indices for faster bulk loading
-          console.log(`⚡ [Main] Not at chain head - dropping indices for faster indexing...`);
+          // Not at head AND missing indices - this is initial bulk sync
+          // Drop indices for faster bulk loading
+          console.log(`⚡ [Main] Initial sync detected - dropping indices for faster bulk loading...`);
           await dropIndicesForBulkLoad(em);
-          indicesNeedRecreation = true; // Mark that we'll need to recreate
+          // indicesNeedRecreation is already true from checkIndicesNeedRecreation
         }
       } catch (e: any) {
         console.log(`⚠️ [Main] Error in bulk index mode initialization: ${e.message}`);
