@@ -1,6 +1,7 @@
 import { In, Not } from "typeorm";
 import { TypeormDatabase, Store } from "@subsquid/typeorm-store";
-import { Network } from "@dcl/schemas";
+import { Network, ChainId } from "@dcl/schemas";
+import { startBlockByNetwork } from "./addresses/startBlocks";
 import {
   Order,
   Rarity,
@@ -47,6 +48,7 @@ import {
   checkIndicesNeedRecreation,
   getIndicesStatus,
   logIndexConfiguration,
+  isFreshSync,
 } from "../common/utils/indexManager";
 import { getAddresses } from "../common/utils/addresses";
 import {
@@ -120,6 +122,11 @@ const BULK_INDEX_MODE = true;
 let bulkModeInitialized = false;
 let indicesRecreated = false;
 let indicesNeedRecreation = false; // Will be set on startup check
+
+// Get the chainId and calculate the lowest initial block for this network
+const chainId = +(process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET);
+const networkStartBlocks = startBlockByNetwork[chainId] || startBlockByNetwork[ChainId.MATIC_MAINNET];
+const INITIAL_BLOCK = Math.min(...Object.values(networkStartBlocks)); // Lowest block = where sync starts
 
 // 📊 Universal event counter - tracks total events processed across all batches
 let totalEventsProcessed = 0;
@@ -336,37 +343,52 @@ processor.run(
           ctx.store as unknown as { em: () => import("typeorm").EntityManager }
         ).em();
         
-        // Log configuration on startup
-        logIndexConfiguration();
+        const currentBlock = ctx.blocks[0]?.header.height || 0;
         
-        // Check if indices need recreation (handles restart case)
-        console.log(`⚡ [Main] BULK INDEX MODE enabled - checking index state...`);
-        console.log(`⚡ [Main] Current block: ${ctx.blocks[0]?.header.height}, isHead: ${ctx.isHead}`);
+        // Log configuration on startup (pass INITIAL_BLOCK for threshold calculation)
+        logIndexConfiguration(INITIAL_BLOCK);
         
+        console.log(`[IndexMgr] BULK INDEX MODE enabled - checking index state...`);
+        console.log(`[IndexMgr] Current block: ${currentBlock.toLocaleString()}, isHead: ${ctx.isHead}`);
+        console.log(`[IndexMgr] ChainId: ${chainId}, Initial block (from config): ${INITIAL_BLOCK.toLocaleString()}`);
+        
+        // Check if this is a FRESH sync (new deploy from low block) vs RESTART of already synced squid
+        // Uses INITIAL_BLOCK from config with 10% threshold
+        const freshSync = isFreshSync(currentBlock, INITIAL_BLOCK);
+        
+        // Check if indices exist in DB
         indicesNeedRecreation = await checkIndicesNeedRecreation(em);
         
-        // KEY FIX: If ALL indices exist, the squid already completed initial sync before.
-        // Do NOT drop indices - this handles the restart case for already-synced squids.
-        if (!indicesNeedRecreation) {
-          console.log(`⚡ [Main] All indices exist - squid already completed initial sync previously`);
-          console.log(`⚡ [Main] Skipping index drop - indices will remain intact`);
+        console.log(`[IndexMgr] Decision factors: freshSync=${freshSync}, indicesNeedRecreation=${indicesNeedRecreation}, isHead=${ctx.isHead}`);
+        
+        if (freshSync) {
+          // FRESH SYNC: New deploy from block near initial block
+          // Indices exist from migrations but we need to drop them for faster bulk loading
+          console.log(`[IndexMgr] ⚡ FRESH SYNC detected (block ${currentBlock.toLocaleString()} is within 10% of initial ${INITIAL_BLOCK.toLocaleString()})`);
+          console.log(`[IndexMgr] Dropping indices for faster bulk indexing...`);
+          await dropIndicesForBulkLoad(em);
+          indicesNeedRecreation = true; // We need to recreate when we reach head
+        } else if (!indicesNeedRecreation) {
+          // RESTART of already synced squid: All indices exist and block is high
+          // Do NOT touch indices - they're fine
+          console.log(`[IndexMgr] ✅ RESTART of synced squid detected (block ${currentBlock.toLocaleString()} >> initial ${INITIAL_BLOCK.toLocaleString()})`);
+          console.log(`[IndexMgr] All indices exist - skipping index management`);
           indicesRecreated = true; // Mark as done so we don't try to recreate later
         } else if (ctx.isHead) {
           // At head but missing indices - recreate them now
-          console.log(`⚡ [Main] At chain head but missing indices - recreating now`);
+          console.log(`[IndexMgr] At chain head but missing indices - recreating now`);
           await recreateIndices(em);
           indicesRecreated = true;
         } else {
-          // Not at head AND missing indices - this is initial bulk sync
-          // Drop indices for faster bulk loading
-          console.log(`⚡ [Main] Initial sync detected - dropping indices for faster bulk loading...`);
-          await dropIndicesForBulkLoad(em);
-          // indicesNeedRecreation is already true from checkIndicesNeedRecreation
+          // Not at head AND missing indices AND not fresh sync
+          // This is a mid-sync restart - just let it continue, recreate when we reach head
+          console.log(`[IndexMgr] Mid-sync restart detected (block ${currentBlock.toLocaleString()}) - indices missing, will recreate at head`);
+          // indicesNeedRecreation is already true
         }
       } catch (e: any) {
-        console.log(`⚠️ [Main] Error in bulk index mode initialization: ${e.message}`);
-        console.log(`⚠️ [Main] Stack: ${e.stack}`);
-        console.log(`⚠️ [Main] Continuing without index management...`);
+        console.log(`[IndexMgr] ❌ Error in bulk index mode initialization: ${e.message}`);
+        console.log(`[IndexMgr] Stack: ${e.stack}`);
+        console.log(`[IndexMgr] Continuing without index management...`);
         // Don't throw - allow the squid to continue operating
       }
     }
@@ -1733,13 +1755,13 @@ processor.run(
     );
 
     // ⚡ BULK INDEX MODE: Recreate indices when we're caught up with chain head
-    // Check if we're within 100 blocks of the chain head (ctx.isHead is true when at tip)
     if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
-      console.log(`⚡ [Main] ═══════════════════════════════════════════════════════════`);
-      console.log(`⚡ [Main] 🎉 REACHED CHAIN HEAD - Starting index recreation process`);
-      console.log(`⚡ [Main] Current block: ${ctx.blocks[ctx.blocks.length - 1]?.header.height}`);
-      console.log(`⚡ [Main] indicesNeedRecreation: ${indicesNeedRecreation}`);
-      console.log(`⚡ [Main] ═══════════════════════════════════════════════════════════`);
+      const currentBlock = ctx.blocks[ctx.blocks.length - 1]?.header.height;
+      console.log(`[IndexMgr] ═══════════════════════════════════════════════════════════`);
+      console.log(`[IndexMgr] 🎉 REACHED CHAIN HEAD - Starting index recreation process`);
+      console.log(`[IndexMgr] Current block: ${currentBlock}`);
+      console.log(`[IndexMgr] indicesNeedRecreation: ${indicesNeedRecreation}`);
+      console.log(`[IndexMgr] ═══════════════════════════════════════════════════════════`);
       
       try {
         const em = (
@@ -1750,18 +1772,18 @@ processor.run(
         const status = await getIndicesStatus(em);
         
         if (status.missingCount === 0) {
-          console.log(`⚡ [Main] All ${status.total} indices already exist - nothing to do`);
+          console.log(`[IndexMgr] All ${status.total} indices already exist - nothing to do`);
           indicesRecreated = true;
         } else {
-          console.log(`⚡ [Main] ${status.missingCount}/${status.total} indices missing - recreating...`);
+          console.log(`[IndexMgr] ${status.missingCount}/${status.total} indices missing - recreating...`);
           await recreateIndices(em);
           indicesRecreated = true;
-          console.log(`⚡ [Main] Index recreation completed`);
+          console.log(`[IndexMgr] ✅ Index recreation completed successfully`);
         }
       } catch (e: any) {
-        console.log(`⚠️ [Main] Error recreating indices: ${e.message}`);
-        console.log(`⚠️ [Main] Stack: ${e.stack}`);
-        console.log(`⚠️ [Main] Indices can be recreated manually or on next restart.`);
+        console.log(`[IndexMgr] ❌ Error recreating indices: ${e.message}`);
+        console.log(`[IndexMgr] Stack: ${e.stack}`);
+        console.log(`[IndexMgr] Indices can be recreated manually or on next restart.`);
         // Don't set indicesRecreated = true so we retry on next batch
         // Don't throw - allow the squid to continue operating
       }
