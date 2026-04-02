@@ -28,16 +28,11 @@ import {
   updateUniqueAndMythicItemsSet,
   updateUniqueCollectorsSet,
 } from "./accountsDayData";
-
-const CREDIT_CONTRACTS = [
-  "0xa1691afad71b9a92d329f1a95c39d3077d8f2f5f", // old CreditsManager contract Amoy
-  "0x037566bc90f85e76587e1b07f9184585f09c1420", // new CreditsManager contract Amoy
-  "0x6a03991dfa9d661ef7ad3c6f88b31f16e5a282cf", // CreditsManager contract Mainnet
-  "0xe9f961e6ded4e1476bbee4faab886d63a2493eb9", // new CreditsManager contract Mainnet
-];
+import { Network as DclNetwork } from "@dcl/schemas";
+import { getAddresses } from "../../common/utils/addresses";
 
 function isCreditSale(buyer: string): boolean {
-  return CREDIT_CONTRACTS.includes(buyer);
+  return (getAddresses(DclNetwork.MATIC).CreditsManager as string[]).includes(buyer);
 }
 
 export function isTransakOperation(buyer: string): boolean {
