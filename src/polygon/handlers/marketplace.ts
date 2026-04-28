@@ -29,7 +29,7 @@ import { getAddresses } from "../../common/utils/addresses";
 import { MarketplaceContractData, MarketplaceV2ContractData } from "../state";
 import { Context } from "../processor";
 import { TradedEventArgs } from "../abi/DecentralandMarketplacePolygon";
-import { encodeTokenId, handleIssue } from "./collection";
+import { handleIssue } from "./collection";
 import {
   getTradeEventData,
   getTradeEventType,
@@ -312,13 +312,28 @@ export async function handleTraded(
       console.log("ERROR: itemId not found in traded event");
       return;
     }
-    const collectionContract = new CollectionV2ABI.Contract(
-      ctx,
-      block.header,
-      collectionAddress
+    // Find the actual Issue log emitted by the collection in this same tx.
+    // We can't compute issuedId from items(itemId).totalSupply at block.header
+    // because that returns post-block state. When 2+ Trade-mints for the same
+    // item land in the same block (different txs), every read returns the same
+    // final totalSupply, so all simulated Issues collide on the same nftId and
+    // the earlier mints get overwritten in storage.
+    const issueLog = block.logs.find(
+      (l) =>
+        l.transactionIndex === transaction.transactionIndex &&
+        l.address.toLowerCase() === collectionAddress.toLowerCase() &&
+        l.topics[0] === CollectionV2ABI.events.Issue.topic &&
+        BigInt(l.topics[3]) === BigInt(itemId)
     );
-    const item = await collectionContract.items(itemId);
-    const tokenId = encodeTokenId(Number(itemId), Number(item.totalSupply));
+    if (!issueLog) {
+      console.log(
+        `ERROR: Issue log not found for trade tx ${transaction.hash} item ${itemId}`
+      );
+      return;
+    }
+    const issueDecoded = CollectionV2ABI.events.Issue.decode(issueLog);
+    const tokenId = issueDecoded._tokenId;
+    const issuedId = issueDecoded._issuedId;
 
     const logFromTraded = block.logs.find(
       (log) => log.topics[0] === MarketplaceV3ABI.events.Traded.topic
@@ -342,7 +357,7 @@ export async function handleTraded(
       _caller: logFromTraded?.address || "",
       _itemId: itemId,
       _tokenId: tokenId,
-      _issuedId: item.totalSupply,
+      _issuedId: issuedId,
     };
     await handleIssue(
       ctx,
