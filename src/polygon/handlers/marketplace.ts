@@ -318,6 +318,9 @@ export async function handleTraded(
     // item land in the same block (different txs), every read returns the same
     // final totalSupply, so all simulated Issues collide on the same nftId and
     // the earlier mints get overwritten in storage.
+    // Edge case: if a single tx mints the same itemId twice (batch aggregator),
+    // find() returns the first matching Issue. Not a regression vs. the previous
+    // implementation; would need the current Traded log's logIndex to disambiguate.
     const issueLog = block.logs.find(
       (l) =>
         l.transactionIndex === transaction.transactionIndex &&
@@ -336,7 +339,9 @@ export async function handleTraded(
     const issuedId = issueDecoded._issuedId;
 
     const logFromTraded = block.logs.find(
-      (log) => log.topics[0] === MarketplaceV3ABI.events.Traded.topic
+      (log) =>
+        log.transactionIndex === transaction.transactionIndex &&
+        log.topics[0] === MarketplaceV3ABI.events.Traded.topic
     );
 
     if (!logFromTraded || !logFromTraded.address) {
