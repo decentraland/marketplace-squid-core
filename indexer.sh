@@ -8,6 +8,7 @@ SQUID_READER_USER="marketplace_squid_api_reader"
 API_READER_USER="dapps_marketplace_user"
 ATLAS_SERVER_READONLY_USER="atlas_server_readonly_user"
 MARKETPLACE_TRADES_MV_ROLE="mv_trades_owner"
+SQUIDS_PUBLIC_TABLE="squids"
 MARKETPLACE_SCHEMA="marketplace"
 
 # Get commit hash from environment variable
@@ -79,6 +80,9 @@ else
 
     -- Grant usage on marketplace schema
     GRANT USAGE ON SCHEMA $MARKETPLACE_SCHEMA TO $NEW_DB_USER;
+
+    -- Grant insert/update to squid public table
+    GRANT SELECT, INSERT, UPDATE ON TABLE $SQUIDS_PUBLIC_TABLE TO $NEW_DB_USER; 
 
     -- Add new user to mv_trades_owner
     GRANT $MARKETPLACE_TRADES_MV_ROLE TO $NEW_DB_USER;    
