@@ -32,6 +32,47 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.deployment-environment }}
     steps:
+      - name: Resolve squid-management-server URL
+        id: mgmt
+        run: |
+          case "${{ inputs.deployment-environment }}" in
+            prd) url="https://squid-management-server.decentraland.org" ;;
+            dev) url="https://squid-management-server.decentraland.zone" ;;
+            *) echo "::error::Unknown environment '${{ inputs.deployment-environment }}'"; exit 1 ;;
+          esac
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Block deploy if target slot is LIVE
+        env:
+          MGMT_URL: ${{ steps.mgmt.outputs.url }}
+          PROJECT: marketplace
+          SLOT: ${{ inputs.deployment-server }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -e
+          if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "::error::CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET secrets are not configured. The squid-management-server is gated by Cloudflare Access."
+            exit 1
+          fi
+          response=$(curl -sS --fail \
+            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+            "${MGMT_URL}/${PROJECT}/${SLOT}/is-live")
+          echo "is-live response: $response"
+          live=$(echo "$response" | jq -r '.live')
+          active_schema=$(echo "$response" | jq -r '.activeSchema')
+          live_service=$(echo "$response" | jq -r '.liveService')
+          echo "Project:        $PROJECT"
+          echo "Slot:           $SLOT"
+          echo "Active schema:  $active_schema"
+          echo "Live service:   $live_service"
+          echo "Live:           $live"
+          if [ "$live" = "true" ]; then
+            echo "::error::Refusing to deploy: slot '$SLOT' for project '$PROJECT' is currently LIVE (service $live_service serves schema $active_schema, which is what the API queries). Deploy to the other slot, wait for it to catch up, then promote it before redeploying here."
+            exit 1
+          fi
+
       - name: Trigger deployment
         uses: decentraland/dcl-deploy-action@main
         with:
