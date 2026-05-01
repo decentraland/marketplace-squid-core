@@ -5,7 +5,16 @@ import { EntityManager } from 'typeorm'
 import { NFT } from '../../model'
 import eventPublisher from './event_publisher'
 
+// ⚡ Disable lastNotified logic entirely - no reads/writes to squids table
+// Set to true to enable lastNotified tracking
+const ENABLE_LAST_NOTIFIED = false;
+
 export async function getLastNotified(store: Store): Promise<bigint | null> {
+  // If disabled, always return null (skip all lastNotified checks)
+  if (!ENABLE_LAST_NOTIFIED) {
+    return null;
+  }
+  
   const em = (store as unknown as { em: () => EntityManager }).em()
   const result = await em.query(
     "SELECT last_notified FROM public.squids WHERE name = $1",
@@ -19,6 +28,11 @@ export async function getLastNotified(store: Store): Promise<bigint | null> {
 }
 
 export async function setLastNotified(store: Store, timestamp: bigint) {
+  // If disabled, skip the update entirely
+  if (!ENABLE_LAST_NOTIFIED) {
+    return;
+  }
+  
   const em = (store as unknown as { em: () => EntityManager }).em()
   await em.query(
     "UPDATE public.squids SET last_notified = $1 WHERE name = $2",
@@ -38,18 +52,18 @@ export async function sendTransferEvent(
     // If lastNotified is null, it means we're processing historical blocks and should skip
     if (lastNotified === undefined) {
       lastNotified = await getLastNotified(store)
-      console.log('LastNotified timestamp for NFT', nft.id, lastNotified)
+      // Only log once per batch, not per NFT - this was causing spam
     }
     
     // If lastNotified is null (explicitly passed for historical blocks), skip sending event
     if (lastNotified === null) {
-      console.log('Not sending transfer event for NFT', nft.id, 'because lastNotified is null')
+      // Skip silently - historical blocks don't need logging
       return
     }
 
     // Only send if there's no lastNotified timestamp or if the NFT was updated after the last notification
     if (lastNotified && nft.updatedAt <= lastNotified) {
-      console.log('Not sending transfer event for NFT', nft.id, 'because it was not updated since the last notified timestamp')
+      // Skip silently - no need to log each skipped NFT
       return
     }
 
@@ -68,8 +82,11 @@ export async function sendTransferEvent(
     
     // Update lastNotified timestamp after successfully sending the event
     await setLastNotified(store, nft.updatedAt)
+    
+    // Only log successful sends (these are rare in production)
+    console.log(`[EVENTS] ✅ Sent transfer event for NFT ${nft.id}`)
   } catch (e) {
-    console.log('Error in sendTransferEvent:', e)
-    console.log('Could not send transfer event for NFT', nft.id)
+    console.log('[EVENTS] ❌ Error in sendTransferEvent:', e)
+    console.log('[EVENTS] Could not send transfer event for NFT', nft.id)
   }
 }

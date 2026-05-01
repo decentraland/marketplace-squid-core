@@ -17,6 +17,7 @@ import {
   AnalyticsDayData,
   Category,
   Count,
+  Item,
   NFT,
   Order,
   OrderStatus,
@@ -112,7 +113,8 @@ export async function handleOrderSuccessful(
   accounts: Map<string, Account>,
   analytics: Map<string, AnalyticsDayData>,
   counts: Map<string, Count>,
-  sales: Map<string, Sale>
+  sales: Map<string, Sale>,
+  items: Map<string, Item>
 ): Promise<void> {
   const { assetId, buyer, id, nftAddress, seller, totalPrice } = event;
   const category = getCategory(Network.ETHEREUM, nftAddress);
@@ -168,7 +170,8 @@ export async function handleOrderSuccessful(
     sales,
     accounts,
     analytics,
-    counts
+    counts,
+    items
   );
 }
 
@@ -181,7 +184,8 @@ export async function handleTraded(
   accounts: Map<string, Account>,
   analytics: Map<string, AnalyticsDayData>,
   counts: Map<string, Count>,
-  sales: Map<string, Sale>
+  sales: Map<string, Sale>,
+  items: Map<string, Item>
 ): Promise<void> {
   const tradeType = getTradeEventType(event, Network.ETHEREUM);
   const tradeData = getTradeEventData(event, Network.ETHEREUM);
@@ -239,7 +243,8 @@ export async function handleTraded(
     sales,
     accounts,
     analytics,
-    counts
+    counts,
+    items
   );
 }
 

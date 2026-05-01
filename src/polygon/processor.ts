@@ -29,11 +29,12 @@ import { startBlockByNetwork } from "./addresses/startBlocks";
 
 const addresses = getAddresses(Network.MATIC);
 const chainId = process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET;
-
+console.log("chainId", chainId);
 const GATEWAY = `https://v2.archive.subsquid.io/network/polygon-${
   chainId == ChainId.MATIC_MAINNET ? "mainnet" : "amoy-testnet"
 }`;
 const RPC_ENDPOINT = process.env.RPC_ENDPOINT_POLYGON;
+console.log("RPC_ENDPOINT", RPC_ENDPOINT);
 
 const FINALITY_CONFIRMATION = parseInt(
   process.env.FINALITY_CONFIRMATION_POLYGON || "500"
