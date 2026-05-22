@@ -41,7 +41,7 @@ const FINALITY_CONFIRMATION = parseInt(
 const collections = loadCollections();
 
 export const processor = new EvmBatchProcessor()
-  .setGateway(GATEWAY)
+  .setGateway({ url: GATEWAY, apiKey: process.env.SQUID_API_KEY })
   .setPrometheusPort(parseInt(process.env.POLYGON_PROMETHEUS_PORT || "3001"))
   .setRpcEndpoint({
     url: assertNotNull(RPC_ENDPOINT),
