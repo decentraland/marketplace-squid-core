@@ -33,12 +33,17 @@ import {
   MarketplaceV2ContractData,
   StoreContractData,
 } from "./state";
+import { TransferGiftCandidate } from "../common/utils/events";
 
 export type PolygonInMemoryState = {
   sales: Map<string, Sale>;
   curations: Map<string, Curation>;
   mints: Map<string, Mint>;
   transfers: Map<string, Transfer>;
+  // Pending gift notifications collected during the batch, keyed by
+  // `${txHash}-${nftId}`. Reconciled against `sales` post-batch so that
+  // transfers that are actually marketplace purchases are not notified as gifts.
+  transferGiftCandidates: Map<string, TransferGiftCandidate>;
   squidRouterOrders: Map<string, SquidRouterOrder>;
   // ids
   collectionIds: Set<string>;

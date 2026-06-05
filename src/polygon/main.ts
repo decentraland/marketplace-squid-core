@@ -78,7 +78,11 @@ import {
   getTradeEventData,
   getTradeEventType,
 } from "../common/utils/marketplaceV3";
-import { getLastNotified } from "../common/utils/events";
+import {
+  getLastNotified,
+  setLastNotified,
+  publishTransferGift,
+} from "../common/utils/events";
 
 const schemaName = process.env.DB_SCHEMA;
 const addresses = getAddresses(Network.MATIC);
@@ -88,6 +92,15 @@ const preloadedCollectionsHeight = loadCollections().height;
 // Cache lastNotified timestamp to avoid querying DB for historical blocks
 let cachedLastNotified: bigint | null = null;
 let lastNotifiedLoaded = false;
+// Hard lower bound (epoch seconds) for gift notifications. Unlike last_notified
+// (which lives in public.squids and could be stale), this floor comes from the
+// environment, so it survives any DB wipe / re-index and guarantees we never
+// backfill historical gift notifications. Defaults to process start time when
+// unset, which is also safe (a re-index/restart never replays old gifts).
+const minTransferNotificationTimestamp = BigInt(
+  process.env.MIN_TRANSFER_NOTIFICATION_TIMESTAMP ??
+    Math.floor(Date.now() / 1000)
+);
 
 processor.run(
   new TypeormDatabase({
@@ -156,6 +169,7 @@ processor.run(
       curations,
       mints,
       squidRouterOrders,
+      transferGiftCandidates,
       // ids
       itemIds,
       collectionIds,
@@ -1020,7 +1034,8 @@ processor.run(
               event as CollectionV2ABI.TransferEventArgs,
               block.header,
               storedData,
-              batchLastNotified
+              inMemoryData,
+              log.transactionHash
             );
           } catch (e) {
             console.log('Error in handleTransfer:', e);
@@ -1156,6 +1171,61 @@ processor.run(
     await ctx.store.insert([...transfers.values()]);
     await ctx.store.insert([...curations.values()]);
     await ctx.store.insert([...squidRouterOrders.values()]);
+
+    // --- Gift notifications (TRANSFER_RECEIVED) ---
+    // A transfer is a genuine gift only if it is NOT part of a marketplace
+    // operation. Sales (orders, bids and offchain trades) all create a Sale via
+    // trackSale in this same batch, keyed by (txHash, nft). Any transfer whose
+    // (txHash, nftId) matches a Sale is a purchase and must not notify the buyer
+    // as a gift. We decide this here, post-batch, because within a transaction
+    // the ERC721 Transfer log is processed before the marketplace event that
+    // records the sale.
+    if (transferGiftCandidates.size > 0) {
+      const soldKeys = new Set<string>();
+      for (const sale of sales.values()) {
+        soldKeys.add(`${sale.txHash.toLowerCase()}-${sale.nft.id}`);
+      }
+
+      // Never (re-)emit at or below this floor. The env-based floor protects
+      // against backfilling on a re-index even if last_notified is stale; the
+      // watermark dedupes incrementally at head.
+      const floor =
+        batchLastNotified && batchLastNotified > minTransferNotificationTimestamp
+          ? batchLastNotified
+          : minTransferNotificationTimestamp;
+
+      let maxNotified = floor;
+      let emitted = 0;
+      for (const candidate of transferGiftCandidates.values()) {
+        if (candidate.timestamp <= floor) {
+          continue;
+        }
+        if (
+          soldKeys.has(`${candidate.txHash.toLowerCase()}-${candidate.nftId}`)
+        ) {
+          // It's a marketplace purchase, not a gift.
+          continue;
+        }
+        try {
+          await publishTransferGift(candidate);
+          emitted++;
+          if (candidate.timestamp > maxNotified) {
+            maxNotified = candidate.timestamp;
+          }
+        } catch (e) {
+          console.log(
+            "Error publishing transfer gift for NFT",
+            candidate.nftId,
+            e
+          );
+        }
+      }
+
+      if (emitted > 0 && maxNotified > (batchLastNotified ?? 0n)) {
+        await setLastNotified(ctx.store, maxNotified);
+      }
+    }
+
     // console.log('accounts polygon: ', accounts);
     ctx.log.info(
       `Batch from block: ${ctx.blocks[0].header.height} to ${

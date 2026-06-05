@@ -963,11 +963,12 @@ export async function handleTransfer(
   event: CollectionV2ABI.TransferEventArgs,
   block: Block,
   storedData: PolygonStoredData,
-  lastNotified: bigint | null = null
+  inMemoryData: PolygonInMemoryState,
+  txHash: string
 ): Promise<void> {
   // Do not compute mints
   if (!isMint(event.from)) {
-    await handleTransferNFT(ctx, collectionAddress, event, block, storedData, lastNotified);
+    await handleTransferNFT(ctx, collectionAddress, event, block, storedData, inMemoryData, txHash);
   } else {
     // console.log(`transfer found but not mint, it was from: ${event.from}`);
   }
