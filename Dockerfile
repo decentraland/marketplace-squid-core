@@ -47,8 +47,10 @@ RUN echo -e "loglevel=silent\\nupdate-notifier=false" > /squid/.npmrc
 RUN npm i -g @subsquid/cli@latest && mv $(which sqd) /usr/local/bin/sqd
 
 # Install jq and AWS CLI v1
+# --break-system-packages is required since the node:24-alpine base image ships
+# a PEP 668 "externally-managed" Python, which otherwise rejects the pip install.
 RUN apk update && apk add --no-cache tini postgresql-client curl jq python3 py3-pip \
-    && pip3 install awscli \
+    && pip3 install --break-system-packages awscli \
     && rm -rf /var/cache/apk/*
 
 ENV ETH_PROMETHEUS_PORT 3000
