@@ -30,7 +30,7 @@ const GATEWAY = `https://v2.archive.subsquid.io/network/polygon-${
 }`;
 
 const processor = new EvmBatchProcessor()
-  .setGateway(GATEWAY)
+  .setGateway({ url: GATEWAY, apiKey: process.env.SQUID_API_KEY })
   .setRpcEndpoint({
     url: assertNotNull(process.env.RPC_ENDPOINT_POLYGON),
     rateLimit: 10,
