@@ -81,10 +81,20 @@ export let storeContractData: StoreContractData = {
   feeOwner: undefined,
 };
 
+// CollectionStore contract creation blocks
+const START_BLOCK_COLLECTION_STORE: Record<number, number> = {
+  [ChainId.MATIC_AMOY]: 5706656, // Same as MarketplaceV2 for testnet
+  [ChainId.MATIC_MAINNET]: 15202567,
+};
+
 export const getStoreContractData = async (ctx: Context, block: Block) => {
+  const contractStartingBlock = START_BLOCK_COLLECTION_STORE[chainId];
+  
+  // Only fetch if contract exists at this block height
   if (
-    storeContractData.fee === undefined ||
-    storeContractData.feeOwner === undefined
+    (storeContractData.fee === undefined ||
+      storeContractData.feeOwner === undefined) &&
+    block.height >= contractStartingBlock
   ) {
     console.log("INFO: Fetching store contract data for first time");
     const addresses = getAddresses(Network.MATIC);
@@ -108,10 +118,14 @@ export const getMarketplaceContractData = async (
   ctx: Context,
   block: Block
 ) => {
+  const contractStartingBlock = START_BLOCK_MARKETPLACEV1[chainId];
+  
+  // Only fetch if contract exists at this block height (and only on mainnet)
   if (
     chainId === ChainId.MATIC_MAINNET && // there's no contract for AMOY
     (marketplaceContractData.ownerCutPerMillion === undefined ||
-      marketplaceContractData.owner === undefined)
+      marketplaceContractData.owner === undefined) &&
+    block.height >= contractStartingBlock
   ) {
     console.log("INFO: Fetching Marketplace v1 contract data for first time");
     const addresses = getAddresses(Network.MATIC);

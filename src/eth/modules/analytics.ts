@@ -4,6 +4,7 @@ import {
   Account,
   AnalyticsDayData,
   Count,
+  Item,
   NFT,
   Network,
   Sale,
@@ -44,7 +45,8 @@ export async function trackSale(
   sales: Map<string, Sale>,
   accounts: Map<string, Account>,
   analytics: Map<string, AnalyticsDayData>,
-  counts: Map<string, Count>
+  counts: Map<string, Count>,
+  items: Map<string, Item>
 ): Promise<void> {
   // ignore zero price sales
   if (price === BigInt(0)) {
@@ -75,6 +77,27 @@ export async function trackSale(
     sale.searchTokenId = nft.tokenId;
     sale.searchContractAddress = nft.contractAddress;
     sale.searchCategory = nft.category;
+
+    // Add item information if available (for wearables)
+    // First try nft.item (loaded relation), then try items map
+    let item: Item | undefined | null = nft.item;
+    if (
+      !item &&
+      nft.itemBlockchainId !== undefined &&
+      nft.itemBlockchainId !== null
+    ) {
+      // Try to find item in the items map using the NFT's collection and itemBlockchainId
+      // Item ID format is typically: collectionAddress-blockchainId
+      const itemId = `${nft.contractAddress}-${nft.itemBlockchainId}`;
+      console.log(`Looking for item ID: ${itemId}`);
+      item = items.get(itemId);
+    }
+
+    if (item) {
+      console.log(`Item found: ${item.id}`);
+      sale.item = item;
+      sale.searchItemId = item.blockchainId;
+    }
   } else {
     console.log("ERROR: NFT not found for sale", nftId);
   }

@@ -695,7 +695,8 @@ processor.run(
           accounts,
           analytics,
           counts,
-          sales
+          sales,
+          items
         );
       } else if (topic === marketplaceAbi.events.OrderSuccessful.topic) {
         await handleOrderSuccessful(
@@ -709,7 +710,8 @@ processor.run(
           accounts,
           analytics,
           counts,
-          sales
+          sales,
+          items
         );
       } else if (topic === marketplaceAbi.events.OrderCancelled.topic) {
         handleOrderCancelled(
@@ -738,7 +740,8 @@ processor.run(
           accounts,
           analytics,
           counts,
-          sales
+          sales,
+          items
         );
       } else if (topic === erc721Bid.events.BidCancelled.topic && event) {
         handleBidCancelled(
