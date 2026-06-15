@@ -15,6 +15,10 @@ import { getNFTId } from "../common/utils";
 import { tokenURIMutilcall } from "../common/utils/multicall";
 import { getAddresses } from "../common/utils/addresses";
 import {
+  recordIndexingStart,
+  notifyHeadReachedOnce,
+} from "../common/utils/head-notification";
+import {
   handleAddLand,
   handleCreateEstate,
   handleRemoveLand,
@@ -83,6 +87,17 @@ processor.run(
       0
     );
     console.log("bytesRead: ", bytesRead);
+
+    // Track indexing progress and alert Slack the first time this indexer reaches head.
+    await recordIndexingStart(ctx.store, "eth");
+    if (ctx.isHead && ctx.blocks.length > 0) {
+      await notifyHeadReachedOnce(
+        ctx.store,
+        "eth",
+        ctx.blocks[ctx.blocks.length - 1].header.height
+      );
+    }
+
     const addresses = getAddresses(Network.ETHEREUM);
     const {
       mints,
