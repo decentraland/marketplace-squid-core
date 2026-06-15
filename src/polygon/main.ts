@@ -83,6 +83,10 @@ import {
   setLastNotified,
   publishTransferGift,
 } from "../common/utils/events";
+import {
+  recordIndexingStart,
+  notifyHeadReachedOnce,
+} from "../common/utils/head-notification";
 
 const schemaName = process.env.DB_SCHEMA;
 const addresses = getAddresses(Network.MATIC);
@@ -114,6 +118,18 @@ processor.run(
       (acc, block) => acc + Buffer.byteLength(JSON.stringify(block), "utf8"),
       0
     );
+
+    // Track indexing progress and alert Slack the first time this indexer reaches
+    // head. Done before any early-return below, since head can be reached on a
+    // batch with no DCL-relevant data.
+    await recordIndexingStart(ctx.store, "polygon");
+    if (ctx.isHead && ctx.blocks.length > 0) {
+      await notifyHeadReachedOnce(
+        ctx.store,
+        "polygon",
+        ctx.blocks[ctx.blocks.length - 1].header.height
+      );
+    }
 
     const rarities = await ctx.store
       .find(Rarity)
