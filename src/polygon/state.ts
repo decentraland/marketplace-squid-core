@@ -14,6 +14,7 @@ export const getBatchInMemoryState: () => PolygonInMemoryState = () => ({
   curations: new Map(),
   mints: new Map(),
   transfers: new Map(),
+  transferGiftCandidates: new Map(),
   sales: new Map<string, Sale>(),
   squidRouterOrders: new Map(),
   // ids

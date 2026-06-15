@@ -29,7 +29,6 @@ import { PolygonInMemoryState, PolygonStoredData } from "../types";
 import { Transaction } from "@subsquid/evm-processor";
 import { trackSale } from "../modules/analytics";
 import { StoreContractData } from "../state";
-import { sendTransferEvent } from "../../common/utils/events";
 
 /**
  * @notice mint an NFT by a collection v2 issue event
@@ -188,7 +187,8 @@ export async function handleTransferNFT(
   event: TransferEventArgs,
   block: Block,
   storedData: PolygonStoredData,
-  lastNotified: bigint | null = null
+  inMemoryData: PolygonInMemoryState,
+  txHash: string
 ): Promise<void> {
   const { nfts, orders } = storedData;
   if (event.tokenId.toString() === "") {
@@ -216,9 +216,19 @@ export async function handleTransferNFT(
   nft.updatedAt = timestamp;
   nft.transferredAt = timestamp;
 
-  if (!nft.activeOrder) {
-    await sendTransferEvent(ctx.store, nft, event, lastNotified);
-  }
+  // Record this transfer as a candidate gift notification. We do NOT emit here:
+  // whether it is an actual gift (vs a marketplace purchase) is decided
+  // post-batch, once every Sale of the batch has been tracked. Within a single
+  // transaction the ERC721 Transfer log is processed before the marketplace
+  // event that records the sale, so the sale is not yet known at this point.
+  inMemoryData.transferGiftCandidates.set(`${txHash}-${nft.id}`, {
+    nftId: nft.id,
+    from: event.from,
+    to: event.to,
+    tokenURI: nft.tokenURI ?? null,
+    timestamp,
+    txHash,
+  });
 
   if (nft.activeOrder) {
     const order = orders.get(nft.activeOrder.id);
