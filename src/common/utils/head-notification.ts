@@ -7,12 +7,14 @@ const isMainnet = process.env.POLYGON_CHAIN_ID === "137";
 const SQUID_ALERTS_CHANNEL = isMainnet ? "squid-alerts" : "squid-alerts-dev";
 const ENV_LABEL = isMainnet ? "prd" : "dev";
 
-// Fully-qualify the status table with the indexer's own schema, so it is unique per
-// deployment and isolated from other indexers — independent of the connection's
-// search_path (the independent connection below may not inherit the indexer schema).
-// Falls back to an unqualified name in local dev where DB_SCHEMA is unset.
+// The status table must be referenced UNQUALIFIED. The management server's promote
+// physically RENAMES the indexer schema (marketplace_squid_<ts> -> squid_marketplace)
+// and updates the writer role's search_path, so a name qualified with DB_SCHEMA goes
+// stale after promotion ("schema does not exist" on every batch). An unqualified name
+// follows the rename through search_path, exactly like every entity table does.
+// DB_SCHEMA remains the deployment's identity and is used for Slack labels only.
 const SCHEMA = process.env.DB_SCHEMA;
-const STATUS_TABLE = SCHEMA ? `"${SCHEMA}".head_sync_status` : "head_sync_status";
+const STATUS_TABLE = "head_sync_status";
 
 let slackComponent: ISlackComponent | undefined;
 function getSlack(): ISlackComponent | undefined {
@@ -62,11 +64,35 @@ async function ensureTable(runner: QueryRunner): Promise<void> {
 const startedThisProcess = new Set<string>();
 const headHandledThisProcess = new Set<string>();
 
+// These helpers run once per batch until they succeed. If the DB rejects them
+// persistently (e.g. a schema/permission problem), retrying forever would print a
+// full stack trace per batch and pay a connection checkout per batch, for the whole
+// life of the process — so give up after a few attempts; alerting is best-effort.
+const MAX_ATTEMPTS = 5;
+const startAttempts = new Map<string, number>();
+const headAttempts = new Map<string, number>();
+
+function shouldAttempt(
+  attempts: Map<string, number>,
+  chain: string,
+  op: string
+): boolean {
+  const n = (attempts.get(chain) ?? 0) + 1;
+  attempts.set(chain, n);
+  if (n === MAX_ATTEMPTS + 1) {
+    console.log(
+      `[SLACK] Giving up on ${op} after ${MAX_ATTEMPTS} failed attempts for ${chain}`
+    );
+  }
+  return n <= MAX_ATTEMPTS;
+}
+
 // Records when this indexer began syncing a chain. Idempotent: the first call (this
 // indexer, ever) sets started_at; later calls/restarts are no-ops, so duration is
 // measured from the original start even across restarts.
 export async function recordIndexingStart(store: Store, chain: string): Promise<void> {
   if (startedThisProcess.has(chain)) return;
+  if (!shouldAttempt(startAttempts, chain, "indexing-start recording")) return;
   try {
     await withOwnConnection(store, async (runner) => {
       await ensureTable(runner);
@@ -104,14 +130,19 @@ export async function notifyHeadReachedOnce(
   headBlock: number
 ): Promise<void> {
   if (headHandledThisProcess.has(chain)) return;
+  if (!shouldAttempt(headAttempts, chain, "head-reached alert")) return;
   try {
+    // Upsert instead of plain UPDATE so the alert still fires when the start-recording
+    // row is missing (recordIndexingStart exhausted its attempts); duration then
+    // degrades to ~0s, which beats losing the alert. The WHERE on the conflict arm
+    // keeps the exactly-once gate: an already-announced row updates nothing.
     const rows: { started_at: string; head_reached_at: string }[] =
       await withOwnConnection(store, async (runner) => {
         await ensureTable(runner);
         return runner.query(
-          `UPDATE ${STATUS_TABLE}
-             SET head_reached_at = now()
-           WHERE chain = $1 AND head_reached_at IS NULL
+          `INSERT INTO ${STATUS_TABLE} (chain, head_reached_at) VALUES ($1, now())
+           ON CONFLICT (chain) DO UPDATE SET head_reached_at = now()
+           WHERE ${STATUS_TABLE}.head_reached_at IS NULL
            RETURNING started_at, head_reached_at`,
           [chain]
         );
