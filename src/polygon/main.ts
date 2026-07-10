@@ -113,6 +113,48 @@ import {
 const schemaName = process.env.DB_SCHEMA;
 const addresses = getAddresses(Network.MATIC);
 let bytesRead = 0; // amount of bytes received
+
+// Per-batch invariants, computed once at module load instead of every batch.
+// Lowercased address sets for O(1) lookups inside the event loop.
+const creditsManagerAddresses = new Set(
+  addresses.CreditsManager.map((a: string) => a.toLowerCase())
+);
+const collectionFactoryAddresses = new Set(
+  [addresses.CollectionFactory, addresses.CollectionFactoryV3].map((c) =>
+    c.toLowerCase()
+  )
+);
+const spokeAddressLower = addresses.Spoke?.toLowerCase();
+
+// Format a duration in ms (show seconds if > 1000ms).
+const fmt = (ms: number) =>
+  ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+
+// Push to a Map<K, V[]> without the O(n²) spread of `[...(map.get(key) ?? []), v]`.
+function pushToMapArray<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  let arr = map.get(key);
+  if (!arr) {
+    arr = [];
+    map.set(key, arr);
+  }
+  arr.push(value);
+}
+
+// Topic hash -> human-readable event name, computed once (not per event).
+const topicToName: Record<string, string> = {
+  [CollectionFactoryABI.events.ProxyCreated.topic]: "ProxyCreated",
+  [CollectionFactoryV3ABI.events.ProxyCreated.topic]: "ProxyCreatedV3",
+  [MarketplaceABI.events.OrderCreated.topic]: "OrderCreated",
+  [MarketplaceABI.events.OrderSuccessful.topic]: "OrderSuccessful",
+  [MarketplaceABI.events.OrderCancelled.topic]: "OrderCancelled",
+  [ERC721BidABI.events.BidCreated.topic]: "BidCreated",
+  [ERC721BidABI.events.BidAccepted.topic]: "BidAccepted",
+  [ERC721BidABI.events.BidCancelled.topic]: "BidCancelled",
+  [CollectionV2ABI.events.Transfer.topic]: "Transfer",
+  [CollectionV2ABI.events.Issue.topic]: "Issue",
+  [CollectionV2ABI.events.AddItem.topic]: "AddItem",
+  [MarketplaceV3ABI.events.Traded.topic]: "Traded",
+};
 const preloadedCollections = loadCollections().addresses;
 const preloadedCollectionsHeight = loadCollections().height;
 // Cache lastNotified timestamp to avoid querying DB for historical blocks
@@ -142,10 +184,6 @@ const INITIAL_BLOCK = Math.min(...Object.values(networkStartBlocks)); // Lowest 
 
 // 📊 Universal event counter - tracks total events processed across all batches
 let totalEventsProcessed = 0;
-
-// ⚡ Disable lastNotified logic - no reads/writes to squids table
-// This avoids permission errors and speeds up indexing
-const ENABLE_LAST_NOTIFIED = false;
 
 // ⚡ Extracted upsert function for cleaner code and benchmarking
 interface UpsertResult {
@@ -443,8 +481,7 @@ processor.run(
 
     // Load lastNotified once at startup to compare with batch timestamps
     // This avoids querying DB for every transfer in historical blocks
-    // ⚡ Skip entirely if ENABLE_LAST_NOTIFIED is false
-    if (ENABLE_LAST_NOTIFIED && !lastNotifiedLoaded) {
+    if (!lastNotifiedLoaded) {
       cachedLastNotified = await getLastNotified(ctx.store);
       lastNotifiedLoaded = true;
       console.log("Loaded lastNotified timestamp:", cachedLastNotified);
@@ -465,9 +502,8 @@ processor.run(
 
     // If processing new blocks, reload lastNotified once per batch to keep it updated
     // If processing historical blocks, pass null to skip sending events
-    // ⚡ Skip entirely if ENABLE_LAST_NOTIFIED is false
     let batchLastNotified: bigint | null | undefined = null;
-    if (ENABLE_LAST_NOTIFIED && isProcessingNewBlocks) {
+    if (isProcessingNewBlocks) {
       // Load lastNotified once per batch and pass it to all transfers in this batch
       // This avoids querying DB for each transfer
       batchLastNotified = await getLastNotified(ctx.store);
@@ -490,18 +526,6 @@ processor.run(
       getStoreContractData(ctx, lastBlockHeader),
     ]);
 
-    // ⚡ OPTIMIZATION: Helper to push to Map<K, V[]> without O(n²) spread
-    // Instead of: map.set(key, [...(map.get(key) || []), value])  ← O(n) per call = O(n²) total
-    // Use: pushToMapArray(map, key, value)  ← O(1) per call = O(n) total
-    function pushToMapArray<K, V>(map: Map<K, V[]>, key: K, value: V): void {
-      let arr = map.get(key);
-      if (!arr) {
-        arr = [];
-        map.set(key, arr);
-      }
-      arr.push(value);
-    }
-
     // ⚡ OPTIMIZATION: Single pre-processing loop for all indexing needs
     // Previously we had 3 separate loops - now fused into 1
     const preIndexStart = performance.now();
@@ -515,17 +539,6 @@ processor.run(
     const orderHashByTx = new Map<string, string>();
     // Collect ProxyCreated events for multicall
     const proxyCreatedEvents: { address: string; blockHeader: any }[] = [];
-
-    // Pre-compute lowercase addresses for O(1) lookup (avoid repeated .toLowerCase() in loop)
-    const creditsManagerAddresses = new Set(
-      addresses.CreditsManager.map((a: string) => a.toLowerCase())
-    );
-    const collectionFactoryAddresses = new Set(
-      [addresses.CollectionFactory, addresses.CollectionFactoryV3].map((c) =>
-        c.toLowerCase()
-      )
-    );
-    const spokeAddressLower = addresses.Spoke?.toLowerCase();
 
     for (let block of ctx.blocks) {
       for (let log of block.logs) {
@@ -615,22 +628,6 @@ processor.run(
     // ⚡ DEBUG: Track skipped vs processed events
     let skippedTransfers = 0;
     let processedTransfers = 0;
-
-    // ⚡ OPTIMIZATION: Pre-compute topicToName ONCE (not 19000 times)
-    const topicToName: Record<string, string> = {
-      [CollectionFactoryABI.events.ProxyCreated.topic]: "ProxyCreated",
-      [CollectionFactoryV3ABI.events.ProxyCreated.topic]: "ProxyCreatedV3",
-      [MarketplaceABI.events.OrderCreated.topic]: "OrderCreated",
-      [MarketplaceABI.events.OrderSuccessful.topic]: "OrderSuccessful",
-      [MarketplaceABI.events.OrderCancelled.topic]: "OrderCancelled",
-      [ERC721BidABI.events.BidCreated.topic]: "BidCreated",
-      [ERC721BidABI.events.BidAccepted.topic]: "BidAccepted",
-      [ERC721BidABI.events.BidCancelled.topic]: "BidCancelled",
-      [CollectionV2ABI.events.Transfer.topic]: "Transfer",
-      [CollectionV2ABI.events.Issue.topic]: "Issue",
-      [CollectionV2ABI.events.AddItem.topic]: "AddItem",
-      [MarketplaceV3ABI.events.Traded.topic]: "Traded",
-    };
 
     // Track time spent BEFORE eventStart (BigInt operations, etc)
     let preEventTime = 0;
@@ -1546,10 +1543,6 @@ processor.run(
       metrics.rpcTime.total +
       metrics.eventLoopBreakdown.proxyCreated +
       metrics.eventLoopBreakdown.collectionEvents;
-
-    // Helper to format time (show seconds if > 1000ms)
-    const fmt = (ms: number) =>
-      ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
 
     // Log event loop breakdown if slow
     if (metrics.eventLoopTime > 1000 || metrics.dbQueryTime > 1000) {

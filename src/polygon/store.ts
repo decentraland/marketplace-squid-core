@@ -19,6 +19,10 @@ import {
 import { Context } from "./processor";
 import { PolygonInMemoryState, PolygonStoredData } from "./types";
 
+// Index a list of entities by their id into a Map for O(1) lookups.
+const toMapById = <T extends { id: string }>(entities: T[]): Map<string, T> =>
+  new Map(entities.map((entity) => [entity.id, entity]));
+
 export const getStoredData = async (
   ctx: Context,
   ids: Pick<
@@ -60,7 +64,9 @@ export const getStoredData = async (
       .flat(),
   ];
 
-  // ⚡ OPTIMIZATION: Parallelize ALL independent DB queries
+  // Independent read queries, issued together. Note these all run on the batch's
+  // single Postgres connection, so Promise.all pipelines rather than truly
+  // parallelizes them; it is still a small win over awaiting each in turn.
   const [
     nfts,
     analytics,
@@ -88,7 +94,7 @@ export const getStoredData = async (
           network: ModelNetwork.POLYGON,
         },
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // Analytics
     ctx.store
@@ -96,21 +102,21 @@ export const getStoredData = async (
         id: In([...Array.from(analyticsIds.values())]),
         network: ModelNetwork.POLYGON,
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // ItemDayDatas
     ctx.store
       .findBy(ItemsDayData, {
         id: In([...Array.from(itemDayDataIds.values())]),
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // AccountsDayDatas
     ctx.store
       .findBy(AccountsDayData, {
         id: In([...Array.from(analyticsIds.values())]),
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // Counts
     ctx.store
@@ -119,7 +125,7 @@ export const getStoredData = async (
           network: ModelNetwork.POLYGON,
         },
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // Collections
     ctx.store
@@ -129,7 +135,7 @@ export const getStoredData = async (
           id: In([...collectionIds]),
         },
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // Bids
     ctx.store
@@ -142,10 +148,10 @@ export const getStoredData = async (
           network: ModelNetwork.POLYGON,
         },
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // Rarities
-    ctx.store.find(Rarity).then((q) => new Map(q.map((i) => [i.id, i]))),
+    ctx.store.find(Rarity).then(toMapById),
 
     // Wearables
     ctx.store
@@ -155,7 +161,7 @@ export const getStoredData = async (
           network: ModelNetwork.POLYGON,
         },
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // Emotes
     ctx.store
@@ -164,7 +170,7 @@ export const getStoredData = async (
           id: In([...itemIds]),
         },
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // Metadatas
     ctx.store
@@ -178,13 +184,13 @@ export const getStoredData = async (
           id: In([...metadataIds]),
         },
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
   ]);
 
   // These queries depend on NFTs result
   const nftItemIds = Array.from(nfts.values()).map((nft) => nft.item?.id);
 
-  // ⚡ OPTIMIZATION: Second batch of parallel queries (depend on first batch)
+  // Second round of reads, which depend on the NFT result above.
   const [orders, items] = await Promise.all([
     // Orders (depends on nftIds)
     ctx.store
@@ -192,7 +198,7 @@ export const getStoredData = async (
         nft: In([...Array.from(nftIds.values())]),
         network: ModelNetwork.POLYGON,
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
 
     // Items (depends on nftItemIds)
     ctx.store
@@ -216,7 +222,7 @@ export const getStoredData = async (
           },
         ],
       })
-      .then((q) => new Map(q.map((i) => [i.id, i]))),
+      .then(toMapById),
   ]);
 
   // Accounts query depends on items
@@ -234,7 +240,7 @@ export const getStoredData = async (
       id: In(accountIdsToLookFor),
       network: ModelNetwork.POLYGON,
     })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
+    .then(toMapById);
 
   return {
     counts,
