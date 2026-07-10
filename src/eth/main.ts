@@ -154,6 +154,21 @@ processor.run(
       }
     }
 
+    // ⚡ BULK INDEX MODE: recreate indices once we reach head. MUST run before this
+    // batch reads or writes any managed table — recreateIndices issues plain
+    // CREATE INDEX (SHARE lock) on an independent connection, which would deadlock
+    // against ROW EXCLUSIVE locks the batch transaction takes once it starts writing.
+    // recreateIndices is a no-op when nothing is missing; on error we retry next batch.
+    if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
+      console.log(`[IndexMgr] Reached chain head (eth) - recreating indices`);
+      try {
+        await recreateIndices(ctx.store, ETH_INDICES);
+        indicesRecreated = true;
+      } catch (e: any) {
+        console.log(`[IndexMgr] Error recreating indices (eth): ${e.message}`);
+      }
+    }
+
     const addresses = getAddresses(Network.ETHEREUM);
     const {
       mints,
@@ -1034,19 +1049,6 @@ processor.run(
           ens.size
         }. Orders: ${orders.size}, Sales: ${sales.size}, Bids: ${bids.size}`
       );
-
-      // ⚡ BULK INDEX MODE: recreate ETH indices when caught up with chain head.
-      // recreateIndices is a no-op when nothing is missing. On error we leave
-      // indicesRecreated=false to retry on the next batch.
-      if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
-        console.log(`[IndexMgr] Reached chain head (eth) - recreating indices`);
-        try {
-          await recreateIndices(ctx.store, ETH_INDICES);
-          indicesRecreated = true;
-        } catch (e: any) {
-          console.log(`[IndexMgr] Error recreating indices (eth): ${e.message}`);
-        }
-      }
     } catch (error) {
       ctx.log.error(`error: ${error}`);
     }

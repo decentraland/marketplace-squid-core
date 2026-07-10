@@ -403,6 +403,24 @@ processor.run(
       }
     }
 
+    // ⚡ BULK INDEX MODE: recreate indices once we reach head. This MUST run before
+    // this batch reads or writes any managed table: recreateIndices issues plain
+    // CREATE INDEX (SHARE lock) on an independent connection, and if the batch
+    // transaction had already taken ROW EXCLUSIVE locks (via performUpserts) the two
+    // connections would deadlock — the batch tx can't commit until the handler
+    // returns, and the handler is awaiting the CREATE INDEX. Running it here, before
+    // any table access, keeps the connections contention-free. recreateIndices is a
+    // no-op when nothing is missing; on error we retry next batch.
+    if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
+      console.log(`[IndexMgr] Reached chain head - recreating indices`);
+      try {
+        await recreateIndices(ctx.store, POLYGON_INDICES);
+        indicesRecreated = true;
+      } catch (e: any) {
+        console.log(`[IndexMgr] Error recreating indices: ${e.message}`);
+      }
+    }
+
     // ⚡ OPTIMIZATION 1: Parallelize initial DB queries
     const [rarities, collectionIdsNotIncludedInPreloaded] = await Promise.all([
       ctx.store.find(Rarity).then((q) => new Map(q.map((i) => [i.id, i]))),
@@ -1787,18 +1805,5 @@ processor.run(
       `Batch ${metrics.blockRange} saved: nfts=${nfts.size}, items=${items.size}, sales=${sales.size}, mints=${mints.size}, transfers=${transfers.size}`
     );
 
-    // ⚡ BULK INDEX MODE: Recreate indices when we're caught up with chain head.
-    // recreateIndices is a no-op when nothing is missing, so this is safe to call
-    // once at head. On error we leave indicesRecreated=false to retry next batch.
-    if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
-      console.log(`[IndexMgr] Reached chain head - recreating indices`);
-      try {
-        await recreateIndices(ctx.store, POLYGON_INDICES);
-        indicesRecreated = true;
-      } catch (e: any) {
-        // Don't throw and don't mark done - retry on the next batch.
-        console.log(`[IndexMgr] Error recreating indices: ${e.message}`);
-      }
-    }
   }
 );
