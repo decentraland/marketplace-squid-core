@@ -17,7 +17,16 @@
  *
  * All DDL runs on an independent connection, outside the batch transaction (see
  * withIndexConnection), so each CREATE/DROP INDEX autocommits on its own instead
- * of being held inside the multi-hour processor transaction.
+ * of being held inside the multi-hour processor transaction. Callers must invoke
+ * recreateIndices BEFORE their batch writes to any managed table (see the head
+ * handlers): a plain CREATE INDEX takes a SHARE lock that conflicts with the ROW
+ * EXCLUSIVE locks a writing batch transaction holds, and since that transaction
+ * cannot commit until its handler returns, running the DDL after the writes would
+ * self-deadlock on the same processor. A note on shared tables: when the Polygon
+ * processor recreates a shared-table index (nft/order/sale/…) at head, a
+ * concurrent ETH batch's upserts can briefly block on the same SHARE↔ROW EXCLUSIVE
+ * conflict — not a deadlock (it clears when the ETH batch commits), and it happens
+ * once, so the practical impact is negligible.
  *
  * All logs use prefix [IndexMgr] for easy filtering in Grafana.
  */
@@ -130,9 +139,6 @@ export const ETH_INDICES: IndexGroup = {
 export function flattenIndices(group: IndexGroup): ManagedIndex[] {
   return Object.values(group).flat();
 }
-
-// In-memory hint only (not a source of truth; the DB is authoritative).
-let indicesDroppedInMemory = false;
 
 // Threshold percentage for fresh sync detection (10% above initial block)
 const FRESH_SYNC_THRESHOLD_PERCENT = 0.1;
@@ -256,7 +262,6 @@ export async function dropIndicesForBulkLoad(store: Store, group: IndexGroup): P
 
     if (statusBefore.existingCount === 0) {
       console.log(`${LOG_PREFIX} No managed indices present. Nothing to drop.`);
-      indicesDroppedInMemory = true;
       return;
     }
 
@@ -289,7 +294,6 @@ export async function dropIndicesForBulkLoad(store: Store, group: IndexGroup): P
     console.log(
       `${LOG_PREFIX} Drop complete: dropped=${dropped}, skipped=${skipped}, failed=${failed} in ${durationSec}s`
     );
-    indicesDroppedInMemory = dropped > 0;
   });
 }
 
@@ -305,7 +309,6 @@ export async function recreateIndices(store: Store, group: IndexGroup): Promise<
 
     if (statusBefore.missingCount === 0) {
       console.log(`${LOG_PREFIX} All ${statusBefore.total} indices already exist. Nothing to do.`);
-      indicesDroppedInMemory = false;
       return;
     }
 
@@ -368,7 +371,6 @@ export async function recreateIndices(store: Store, group: IndexGroup): Promise<
     if (statusAfter.missingCount > 0) {
       console.log(`${LOG_PREFIX} ⚠️ Still missing ${statusAfter.missingCount} indices`);
     }
-    indicesDroppedInMemory = false;
   });
 }
 
@@ -389,7 +391,6 @@ export async function checkIndicesNeedRecreation(store: Store, group: IndexGroup
   } else {
     console.log(`${LOG_PREFIX} Startup check: all ${status.total} indices exist`);
   }
-  indicesDroppedInMemory = needsRecreation;
   return needsRecreation;
 }
 

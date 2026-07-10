@@ -1,6 +1,10 @@
-import { Multicall } from "../../abi/multicall";
+import { Multicall, AggregateTuple } from "../../abi/multicall";
 import { functions as CollectionV2Functions } from "../abi/CollectionV2";
 import type { Context, Block } from "../processor";
+
+// Number of contract calls issued per collection in the multicall batch. Keep in
+// sync with the calls pushed below and the per-collection result slice.
+const CALLS_PER_COLLECTION = 9;
 
 const MULTICALL_CONTRACT = "0xcA11bde05977b3631167028862bE2a173976CA11";
 // Multicall3 on Polygon was deployed at block 25770160 (Jan 2022)
@@ -42,8 +46,8 @@ export async function fetchCollectionDataMulticall(
   const multicall = new Multicall(ctx, blockHeader, MULTICALL_CONTRACT);
   const results = new Map<string, CollectionData>();
 
-  // Build all calls: 9 functions x N collections
-  const calls: [any, string, any][] = [];
+  // Build all calls: CALLS_PER_COLLECTION functions x N collections
+  const calls: AggregateTuple[] = [];
   
   for (const address of collectionAddresses) {
     calls.push([CollectionV2Functions.name, address, {}]);
@@ -67,13 +71,15 @@ export async function fetchCollectionDataMulticall(
     const fmt = (ms: number) => ms >= 1000 ? `${(ms/1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
     console.log(`✅ Multicall for ${collectionAddresses.length} collections (${calls.length} calls): ${fmt(multicallDuration)}`);
 
-    // Parse results: 9 results per collection
+    // Parse results: CALLS_PER_COLLECTION results per collection
     for (let i = 0; i < collectionAddresses.length; i++) {
       const address = collectionAddresses[i].toLowerCase();
-      const baseIndex = i * 9;
+      const baseIndex = i * CALLS_PER_COLLECTION;
 
       // Check if all calls succeeded
-      const allSuccess = rawResults.slice(baseIndex, baseIndex + 9).every(r => r.success);
+      const allSuccess = rawResults
+        .slice(baseIndex, baseIndex + CALLS_PER_COLLECTION)
+        .every((r) => r.success);
       
       if (!allSuccess) {
         console.log(`⚠️ Multicall failed for collection ${address.slice(0, 10)}, will use fallback`);
@@ -93,8 +99,9 @@ export async function fetchCollectionDataMulticall(
         chainId: rawResults[baseIndex + 8].value as bigint,
       });
     }
-  } catch (e) {
-    console.error(`❌ Multicall failed completely, will use fallback:`, e);
+  } catch (e: any) {
+    // Log only the message: RPC errors can embed the endpoint URL (with API key).
+    console.error(`❌ Multicall failed completely, will use fallback: ${e.message}`);
     return new Map();
   }
 

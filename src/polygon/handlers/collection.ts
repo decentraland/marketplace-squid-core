@@ -30,19 +30,11 @@ import { Log, Transaction } from "@subsquid/evm-processor";
 import { handleMintNFT, handleTransferNFT } from "./nft";
 import { isMint } from "../../common/utils";
 import { StoreContractData } from "../state";
+import type { CollectionData } from "../utils/collectionMulticall";
 
-// Pre-fetched collection data from multicall
-export interface PrefetchedCollectionData {
-  name: string;
-  symbol: string;
-  owner: string;
-  creator: string;
-  isCompleted: boolean;
-  isApproved: boolean;
-  isEditable: boolean;
-  baseURI: string;
-  chainId: bigint;
-}
+// Pre-fetched collection data from multicall (the multicall keys results by
+// address, so the per-collection payload is CollectionData without its `address`).
+export type PrefetchedCollectionData = Omit<CollectionData, "address">;
 
 export const handleCollectionCreation = async (
   ctx: Context,

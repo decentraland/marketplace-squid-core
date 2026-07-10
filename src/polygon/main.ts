@@ -156,6 +156,8 @@ const topicToName: Record<string, string> = {
   [MarketplaceV3ABI.events.Traded.topic]: "Traded",
 };
 const preloadedCollections = loadCollections().addresses;
+// Set form for O(1) membership checks in the per-log hot path (~84k logs/batch).
+const preloadedCollectionsSet = new Set(preloadedCollections);
 const preloadedCollectionsHeight = loadCollections().height;
 // Cache lastNotified timestamp to avoid querying DB for historical blocks
 let cachedLastNotified: bigint | null = null;
@@ -451,7 +453,7 @@ processor.run(
           log.address === addresses.CollectionManager ||
           log.address === addresses.MarketplaceV3 ||
           log.address === addresses.MarketplaceV3_V2 ||
-          preloadedCollections.includes(log.address) ||
+          preloadedCollectionsSet.has(log.address) ||
           collectionIdsNotIncludedInPreloaded.has(log.address)
       )
     );
