@@ -19,6 +19,15 @@ import {
   notifyHeadReachedOnce,
 } from "../common/utils/head-notification";
 import {
+  dropIndicesForBulkLoad,
+  recreateIndices,
+  checkIndicesNeedRecreation,
+  logIndexConfiguration,
+  isFreshSync,
+  ETH_INDICES,
+} from "../common/utils/indexManager";
+import { getBlockRange } from "../config";
+import {
   handleAddLand,
   handleCreateEstate,
   handleRemoveLand,
@@ -73,6 +82,16 @@ const tokenURIs: Map<string, string> = new Map();
 
 let bytesRead = 0; // amount of bytes received
 
+// ⚡ BULK INDEX MODE: Drop the ETH-owned indices during initial sync and recreate
+// them when caught up. Opt-in and default off; enable via env var BULK_INDEX_MODE=true.
+// The ETH processor manages only its exclusive tables (parcel, estate, ens, data);
+// tables shared with Polygon are managed by the Polygon processor. See indexManager.
+const BULK_INDEX_MODE = process.env.BULK_INDEX_MODE === "true";
+let bulkModeInitialized = false;
+let indicesRecreated = false;
+let indicesNeedRecreation = false;
+const ETH_INITIAL_BLOCK = getBlockRange(Network.ETHEREUM).from;
+
 const schemaName = process.env.DB_SCHEMA;
 processor.run(
   new TypeormDatabase({
@@ -96,6 +115,43 @@ processor.run(
         "eth",
         ctx.blocks[ctx.blocks.length - 1].header.height
       );
+    }
+
+    // ⚡ BULK INDEX MODE: check index state and drop indices on the first batch.
+    if (BULK_INDEX_MODE && !bulkModeInitialized) {
+      bulkModeInitialized = true;
+      try {
+        const currentBlock = ctx.blocks[0]?.header.height || 0;
+
+        logIndexConfiguration(ETH_INDICES, ETH_INITIAL_BLOCK);
+
+        const freshSync = isFreshSync(currentBlock, ETH_INITIAL_BLOCK);
+        indicesNeedRecreation = await checkIndicesNeedRecreation(
+          ctx.store,
+          ETH_INDICES
+        );
+
+        console.log(
+          `[IndexMgr] Decision (eth): block=${currentBlock.toLocaleString()}, freshSync=${freshSync}, indicesNeedRecreation=${indicesNeedRecreation}, isHead=${ctx.isHead}`
+        );
+
+        if (freshSync) {
+          console.log(`[IndexMgr] Fresh sync (eth) - dropping indices for bulk indexing`);
+          await dropIndicesForBulkLoad(ctx.store, ETH_INDICES);
+          indicesNeedRecreation = true;
+        } else if (!indicesNeedRecreation) {
+          console.log(`[IndexMgr] Restart of synced squid (eth) - all indices present`);
+          indicesRecreated = true;
+        } else if (ctx.isHead) {
+          console.log(`[IndexMgr] At head with missing indices (eth) - recreating now`);
+          await recreateIndices(ctx.store, ETH_INDICES);
+          indicesRecreated = true;
+        } else {
+          console.log(`[IndexMgr] Mid-sync restart (eth) - will recreate indices at head`);
+        }
+      } catch (e: any) {
+        console.log(`[IndexMgr] Error in bulk index mode init (eth): ${e.message}`);
+      }
     }
 
     const addresses = getAddresses(Network.ETHEREUM);
@@ -710,7 +766,8 @@ processor.run(
           accounts,
           analytics,
           counts,
-          sales
+          sales,
+          items
         );
       } else if (topic === marketplaceAbi.events.OrderSuccessful.topic) {
         await handleOrderSuccessful(
@@ -724,7 +781,8 @@ processor.run(
           accounts,
           analytics,
           counts,
-          sales
+          sales,
+          items
         );
       } else if (topic === marketplaceAbi.events.OrderCancelled.topic) {
         handleOrderCancelled(
@@ -753,7 +811,8 @@ processor.run(
           accounts,
           analytics,
           counts,
-          sales
+          sales,
+          items
         );
       } else if (topic === erc721Bid.events.BidCancelled.topic && event) {
         handleBidCancelled(
@@ -975,6 +1034,19 @@ processor.run(
           ens.size
         }. Orders: ${orders.size}, Sales: ${sales.size}, Bids: ${bids.size}`
       );
+
+      // ⚡ BULK INDEX MODE: recreate ETH indices when caught up with chain head.
+      // recreateIndices is a no-op when nothing is missing. On error we leave
+      // indicesRecreated=false to retry on the next batch.
+      if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
+        console.log(`[IndexMgr] Reached chain head (eth) - recreating indices`);
+        try {
+          await recreateIndices(ctx.store, ETH_INDICES);
+          indicesRecreated = true;
+        } catch (e: any) {
+          console.log(`[IndexMgr] Error recreating indices (eth): ${e.message}`);
+        }
+      }
     } catch (error) {
       ctx.log.error(`error: ${error}`);
     }

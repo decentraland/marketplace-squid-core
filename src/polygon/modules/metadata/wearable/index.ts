@@ -60,7 +60,7 @@ function getNetwork(network: Network): string {
   const chainName =
     network === Network.ETHEREUM
       ? chainId === ChainId.ETHEREUM_MAINNET.toString()
-        ? "mainnet"
+        ? "ethereum"
         : "sepolia"
       : chainId === ChainId.MATIC_MAINNET.toString()
       ? "matic"
@@ -190,7 +190,7 @@ export function setNFTWearableSearchFields(
   }
   const metadata = metadatas.get(nft.metadata.id);
   if (metadata && metadata.wearable) {
-    const wearable = metadata.wearable
+    const wearable = metadata.wearable;
 
     if (wearable) {
       nft.searchText = `${wearable.name} ${wearable.description}`;
