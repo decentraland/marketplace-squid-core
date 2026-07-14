@@ -265,8 +265,11 @@ processor.run(
                 ? CollectionFactoryABI.events.ProxyCreated.decode(log)
                 : CollectionFactoryV3ABI.events.ProxyCreated.decode(log);
 
-            // collectionsCreatedByFactory.add(event._address.toLowerCase());
-            collectionIdsCreatedInBatch.add(event._address); // add the Id to the list of collections to be processed
+            // Store lowercase: subsquid delivers `log.address` lowercase, so the collection-event
+            // guard below (and collections.get in the handlers) only match a lowercase id. A checksummed
+            // id here silently drops every later Issue/Transfer/SetApproved for the collection — this is
+            // exactly what `collectionIds.add(event._address.toLowerCase())` a few lines down already does.
+            collectionIdsCreatedInBatch.add(event._address.toLowerCase()); // add the Id to the list of collections to be processed
 
             const collectionContract = new CollectionV2ABI.Contract(
               ctx,
@@ -884,7 +887,10 @@ processor.run(
       await handleCollectionCreation(
         ctx,
         block.header,
-        event._address,
+        // Lowercase the id: it's what collections.get(log.address) and the event guard match against
+        // (subsquid log addresses are lowercase). A checksummed id makes the collection unreachable to
+        // all its later events — no NFTs get minted into the index and approval never propagates.
+        event._address.toLowerCase(),
         storedData,
         usedCredits,
         creditValue,
