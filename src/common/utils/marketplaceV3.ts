@@ -9,9 +9,18 @@ export enum TradeType {
 
 export enum TradeAssetType {
   ERC20 = 1,
+  USD_PEGGED_MANA = 2,
   ERC721 = 3,
   ITEM = 4,
 }
+
+// Payment asset types that settle in MANA: plain ERC20 MANA and the USD-pegged MANA the credits
+// checkout (the Shop) uses. Both are priced in the MANA contract, so a trade whose payment leg is
+// either one is a MANA sale/bid — see getTradeEventType.
+const MANA_PAYMENT_ASSET_TYPES = [
+  TradeAssetType.ERC20,
+  TradeAssetType.USD_PEGGED_MANA,
+];
 
 export const getTradeEventType = (
   event: TradedEventArgs,
@@ -19,22 +28,27 @@ export const getTradeEventType = (
 ): TradeType | undefined => {
   const addresses = getAddresses(network);
 
-  // We're only supporting the case of one trade for the moment. We could have multiple trades in the future
-  const isReceivingERC20 =
-    Number(event._trade.received[0].assetType) === TradeAssetType.ERC20;
-  const isSendingERC20 =
-    Number(event._trade.sent[0].assetType) === TradeAssetType.ERC20;
+  // We're only supporting the case of one trade for the moment. We could have multiple trades in the future.
+  // A MANA payment leg is either plain ERC20 MANA or USD-pegged MANA (the credits/Shop checkout) — both
+  // must be recognized, otherwise a credits sale is misclassified and its collection/tokenId are read off
+  // the wrong asset, so the mint never gets indexed.
+  const isReceivingMana = MANA_PAYMENT_ASSET_TYPES.includes(
+    Number(event._trade.received[0].assetType)
+  );
+  const isSendingMana = MANA_PAYMENT_ASSET_TYPES.includes(
+    Number(event._trade.sent[0].assetType)
+  );
   const contractAddressReceived = event._trade.received[0].contractAddress;
   const contractAddressSent = event._trade.sent[0].contractAddress;
 
   // if received is MANA, then it's an order. We could also have other ERC20 sent, but for the moment we are only checking for MANA
   if (
-    isReceivingERC20 &&
+    isReceivingMana &&
     [addresses.MANA, addresses.TRANSAK_TOKEN].includes(contractAddressReceived) // support Transak token to track sales in dev
   ) {
     return TradeType.Order;
   } else if (
-    isSendingERC20 &&
+    isSendingMana &&
     [addresses.MANA, addresses.TRANSAK_TOKEN].includes(contractAddressSent)
   ) {
     return TradeType.Bid;
