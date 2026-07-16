@@ -6,7 +6,7 @@ import { getAddresses } from "../common/utils/addresses";
 import { Contract as MarketplaceContract } from "../abi/Marketplace";
 import { Contract as ERC721BidContract } from "../abi/ERC721Bid";
 import { Context } from "./processor";
-import { BlockData } from "@subsquid/evm-processor";
+import { BlockData } from "./processor";
 import { startBlockByNetwork } from "./data/contracts/start-blocks";
 
 export const getBatchInMemoryState: () => EthereumInMemoryState = () => ({

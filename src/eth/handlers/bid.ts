@@ -1,4 +1,4 @@
-import { BlockData } from "@subsquid/evm-processor";
+import { BlockData } from "../processor";
 import { Network } from "@dcl/schemas";
 import { BidCancelledEventArgs } from "../../abi/ERC721Bid";
 import { BidAcceptedEventArgs, BidCreatedEventArgs } from "../../abi/ERC721Bid";

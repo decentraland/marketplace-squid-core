@@ -1,4 +1,4 @@
-import { BlockData } from "@subsquid/evm-processor";
+import { BlockData } from "../processor";
 import * as CollectionV2ABI from "../../polygon/abi/CollectionV2";
 import * as ERC721Abi from "../../abi/ERC721";
 import { AddWearableEventArgs, TransferEventArgs_2 } from "../../abi/ERC721";
