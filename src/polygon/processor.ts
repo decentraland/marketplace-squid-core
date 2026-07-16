@@ -39,7 +39,7 @@ const collections = loadCollections();
 export const fields = {
   block: { timestamp: true },
   log: { address: true, topics: true, data: true, transactionHash: true },
-  transaction: { hash: true, from: true, to: true, input: true, value: true },
+  transaction: { hash: true, from: true, to: true, input: true },
 } satisfies FieldSelection;
 export type Fields = typeof fields;
 

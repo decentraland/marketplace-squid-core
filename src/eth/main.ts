@@ -116,7 +116,16 @@ run(dataSource, db, async (simpleCtx) => {
   };
     // update the amount of bytes read
     bytesRead += ctx.blocks.reduce(
-      (acc, block) => acc + Buffer.byteLength(JSON.stringify(block), "utf8"),
+      (acc, block) =>
+        acc +
+        Buffer.byteLength(
+          // BigInt-safe: Portal blocks can carry bigint fields that JSON.stringify
+          // rejects; this is only a byte-count metric, so serialize them as strings.
+          JSON.stringify(block, (_k, v) =>
+            typeof v === "bigint" ? v.toString() : v
+          ),
+          "utf8"
+        ),
       0
     );
     console.log("bytesRead: ", bytesRead);
