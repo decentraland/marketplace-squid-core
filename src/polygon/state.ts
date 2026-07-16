@@ -104,8 +104,15 @@ export const getStoreContractData = async (ctx: Context, block: Block) => {
       block,
       addresses.CollectionStore
     );
-    storeContractData.fee = await storeContract.fee();
-    storeContractData.feeOwner = await storeContract.feeOwner();
+    try {
+      storeContractData.fee = await storeContract.fee();
+      storeContractData.feeOwner = await storeContract.feeOwner();
+    } catch (e: any) {
+      // The contract may not be readable at this (historical) block on some RPC
+      // providers — e.g. fee() returns 0x and decoding throws. Leave the data
+      // undefined and retry on a later batch rather than crashing the processor.
+      console.log(`WARN: could not fetch store contract data: ${e.message}`);
+    }
   }
   return storeContractData;
 };
@@ -131,8 +138,12 @@ export const getMarketplaceContractData = async (
     console.log("INFO: Fetching Marketplace v1 contract data for first time");
     const addresses = getAddresses(Network.MATIC);
     const c = new MarketplaceContract(ctx, block, addresses.Marketplace);
-    marketplaceContractData.ownerCutPerMillion = await c.ownerCutPerMillion();
-    marketplaceContractData.owner = await c.owner();
+    try {
+      marketplaceContractData.ownerCutPerMillion = await c.ownerCutPerMillion();
+      marketplaceContractData.owner = await c.owner();
+    } catch (e: any) {
+      console.log(`WARN: could not fetch marketplace contract data: ${e.message}`);
+    }
   }
   return marketplaceContractData;
 };
@@ -156,11 +167,15 @@ export const getMarketplaceV2ContractData = async (
     console.log("INFO: Fetching marketplace v2 contract data for first time");
     const addresses = getAddresses(Network.MATIC);
     const c = new MarketplaceV2Contract(ctx, block, addresses.MarketplaceV2);
-    marketplaceV2ContractData.feesCollectorCutPerMillion =
-      await c.feesCollectorCutPerMillion();
-    marketplaceV2ContractData.feesCollector = await c.feesCollector();
-    marketplaceV2ContractData.royaltiesCutPerMillion =
-      await c.royaltiesCutPerMillion();
+    try {
+      marketplaceV2ContractData.feesCollectorCutPerMillion =
+        await c.feesCollectorCutPerMillion();
+      marketplaceV2ContractData.feesCollector = await c.feesCollector();
+      marketplaceV2ContractData.royaltiesCutPerMillion =
+        await c.royaltiesCutPerMillion();
+    } catch (e: any) {
+      console.log(`WARN: could not fetch marketplace v2 contract data: ${e.message}`);
+    }
   }
   return marketplaceV2ContractData;
 };
@@ -181,10 +196,15 @@ export const getBidV2ContractData = async (ctx: Context, block: Block) => {
     console.log("INFO: Fetching bid v2 contract data for first time");
     const addresses = getAddresses(Network.MATIC);
     const c = new ERC721BidV2Contract(ctx, block, addresses.BidV2);
-    bidV2ContractData.feesCollectorCutPerMillion =
-      await c.feesCollectorCutPerMillion();
-    bidV2ContractData.feesCollector = await c.feesCollector();
-    bidV2ContractData.royaltiesCutPerMillion = await c.royaltiesCutPerMillion();
+    try {
+      bidV2ContractData.feesCollectorCutPerMillion =
+        await c.feesCollectorCutPerMillion();
+      bidV2ContractData.feesCollector = await c.feesCollector();
+      bidV2ContractData.royaltiesCutPerMillion =
+        await c.royaltiesCutPerMillion();
+    } catch (e: any) {
+      console.log(`WARN: could not fetch bid v2 contract data: ${e.message}`);
+    }
   }
   return bidV2ContractData;
 };
