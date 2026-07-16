@@ -29,7 +29,6 @@ import { startBlockByNetwork } from "./addresses/startBlocks";
 
 const addresses = getAddresses(Network.MATIC);
 const chainId = process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET;
-
 const GATEWAY = `https://v2.archive.subsquid.io/network/polygon-${
   chainId == ChainId.MATIC_MAINNET ? "mainnet" : "amoy-testnet"
 }`;

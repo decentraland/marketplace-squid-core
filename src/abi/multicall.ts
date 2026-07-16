@@ -23,7 +23,7 @@ export type MulticallResult<T extends AbiFunction<any, any>> = {
 }
 
 type AnyFunc = AbiFunction<any, any>
-type AggregateTuple<T extends AnyFunc = AnyFunc> = [func: T, address: string, args: T extends AnyFunc ? FunctionArguments<T> : never]
+export type AggregateTuple<T extends AnyFunc = AnyFunc> = [func: T, address: string, args: T extends AnyFunc ? FunctionArguments<T> : never]
 type Call = {target: string, callData: string}
 
 export class Multicall extends ContractBase {

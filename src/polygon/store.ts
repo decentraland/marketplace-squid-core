@@ -19,6 +19,10 @@ import {
 import { Context } from "./processor";
 import { PolygonInMemoryState, PolygonStoredData } from "./types";
 
+// Index a list of entities by their id into a Map for O(1) lookups.
+const toMapById = <T extends { id: string }>(entities: T[]): Map<string, T> =>
+  new Map(entities.map((entity) => [entity.id, entity]));
+
 export const getStoredData = async (
   ctx: Context,
   ids: Pick<
@@ -44,58 +48,6 @@ export const getStoredData = async (
       .flat(),
   ];
 
-  const nfts = await ctx.store
-    .find(NFT, {
-      relations: {
-        owner: true,
-        activeOrder: true,
-        metadata: true,
-        item: true,
-      },
-      where: {
-        id: In(nftIds),
-        network: ModelNetwork.POLYGON,
-      },
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const orders = await ctx.store
-    .findBy(Order, {
-      nft: In([...Array.from(nftIds.values())]),
-      network: ModelNetwork.POLYGON,
-      // id: In([...Array.from(nfts.values()).map((nft) => nft.activeOrder)]), // @TODO, revisit this
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const analytics = await ctx.store
-    .findBy(AnalyticsDayData, {
-      id: In([...Array.from(analyticsIds.values())]),
-      network: ModelNetwork.POLYGON,
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const itemDayDatas = await ctx.store
-    .findBy(ItemsDayData, {
-      id: In([...Array.from(itemDayDataIds.values())]),
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const accountsDayDatas = await ctx.store
-    .findBy(AccountsDayData, {
-      id: In([...Array.from(analyticsIds.values())]),
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const counts = await ctx.store
-    .find(Count, {
-      where: {
-        network: ModelNetwork.POLYGON,
-      },
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const nftItemIds = Array.from(nfts.values()).map((nft) => nft.item?.id);
-
   const itemIdsFlat = [
     ...Array.from(itemIds.entries())
       .map(([contractAddress, itemIds]) =>
@@ -103,32 +55,180 @@ export const getStoredData = async (
       )
       .flat(),
   ];
-  const items = await ctx.store
-    .find(Item, {
-      relations: {
-        collection: true,
-        metadata: true,
-      },
-      where: [
-        {
-          collection: In([...collectionIds]),
-          network: ModelNetwork.POLYGON,
-        },
-        {
-          id: In([...itemIdsFlat]),
-          network: ModelNetwork.POLYGON,
-        },
-        {
-          id: In([...nftItemIds]),
-          network: ModelNetwork.POLYGON,
-        },
-      ],
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
 
+  const metadataIds = [
+    ...Array.from(itemIds.entries())
+      .map(([contractAddress, tokenId]) =>
+        tokenId.map((id) => `${contractAddress}-${id}`)
+      )
+      .flat(),
+  ];
+
+  // Independent read queries, issued together. Note these all run on the batch's
+  // single Postgres connection, so Promise.all pipelines rather than truly
+  // parallelizes them; it is still a small win over awaiting each in turn.
+  const [
+    nfts,
+    analytics,
+    itemDayDatas,
+    accountsDayDatas,
+    counts,
+    collections,
+    bids,
+    rarities,
+    wearables,
+    emotes,
+    metadatas,
+  ] = await Promise.all([
+    // NFTs with relations
+    ctx.store
+      .find(NFT, {
+        relations: {
+          owner: true,
+          activeOrder: true,
+          metadata: true,
+          item: true,
+        },
+        where: {
+          id: In(nftIds),
+          network: ModelNetwork.POLYGON,
+        },
+      })
+      .then(toMapById),
+
+    // Analytics
+    ctx.store
+      .findBy(AnalyticsDayData, {
+        id: In([...Array.from(analyticsIds.values())]),
+        network: ModelNetwork.POLYGON,
+      })
+      .then(toMapById),
+
+    // ItemDayDatas
+    ctx.store
+      .findBy(ItemsDayData, {
+        id: In([...Array.from(itemDayDataIds.values())]),
+      })
+      .then(toMapById),
+
+    // AccountsDayDatas
+    ctx.store
+      .findBy(AccountsDayData, {
+        id: In([...Array.from(analyticsIds.values())]),
+      })
+      .then(toMapById),
+
+    // Counts
+    ctx.store
+      .find(Count, {
+        where: {
+          network: ModelNetwork.POLYGON,
+        },
+      })
+      .then(toMapById),
+
+    // Collections
+    ctx.store
+      .find(Collection, {
+        where: {
+          network: ModelNetwork.POLYGON,
+          id: In([...collectionIds]),
+        },
+      })
+      .then(toMapById),
+
+    // Bids
+    ctx.store
+      .find(Bid, {
+        relations: {
+          nft: true,
+        },
+        where: {
+          id: In([...Array.from(bidIds.values())]),
+          network: ModelNetwork.POLYGON,
+        },
+      })
+      .then(toMapById),
+
+    // Rarities
+    ctx.store.find(Rarity).then(toMapById),
+
+    // Wearables
+    ctx.store
+      .find(Wearable, {
+        where: {
+          id: In([...itemIds]),
+          network: ModelNetwork.POLYGON,
+        },
+      })
+      .then(toMapById),
+
+    // Emotes
+    ctx.store
+      .find(Emote, {
+        where: {
+          id: In([...itemIds]),
+        },
+      })
+      .then(toMapById),
+
+    // Metadatas
+    ctx.store
+      .find(Metadata, {
+        relations: {
+          emote: true,
+          wearable: true,
+        },
+        where: {
+          network: ModelNetwork.POLYGON,
+          id: In([...metadataIds]),
+        },
+      })
+      .then(toMapById),
+  ]);
+
+  // These queries depend on NFTs result
+  const nftItemIds = Array.from(nfts.values()).map((nft) => nft.item?.id);
+
+  // Second round of reads, which depend on the NFT result above.
+  const [orders, items] = await Promise.all([
+    // Orders (depends on nftIds)
+    ctx.store
+      .findBy(Order, {
+        nft: In([...Array.from(nftIds.values())]),
+        network: ModelNetwork.POLYGON,
+      })
+      .then(toMapById),
+
+    // Items (depends on nftItemIds)
+    ctx.store
+      .find(Item, {
+        relations: {
+          collection: true,
+          metadata: true,
+        },
+        where: [
+          {
+            collection: In([...collectionIds]),
+            network: ModelNetwork.POLYGON,
+          },
+          {
+            id: In([...itemIdsFlat]),
+            network: ModelNetwork.POLYGON,
+          },
+          {
+            id: In([...nftItemIds]),
+            network: ModelNetwork.POLYGON,
+          },
+        ],
+      })
+      .then(toMapById),
+  ]);
+
+  // Accounts query depends on items
   const itemRelatedAccounts = [
-    ...Array.from(items.values()).map((item) => item.creator), // load creator accounts
-    ...Array.from(items.values()).map((item) => item.beneficiary), // load beneficiary accounts
+    ...Array.from(items.values()).map((item) => item.creator),
+    ...Array.from(items.values()).map((item) => item.beneficiary),
   ];
 
   const accountIdsToLookFor = [...accountIds, ...itemRelatedAccounts].map(
@@ -140,70 +240,7 @@ export const getStoredData = async (
       id: In(accountIdsToLookFor),
       network: ModelNetwork.POLYGON,
     })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const wearables = await ctx.store
-    .find(Wearable, {
-      where: {
-        id: In([...itemIds]),
-        network: ModelNetwork.POLYGON,
-      },
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const emotes = await ctx.store
-    .find(Emote, {
-      where: {
-        id: In([...itemIds]),
-      },
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const metadataIds = [
-    ...Array.from(itemIds.entries())
-      .map(([contractAddress, tokenId]) =>
-        tokenId.map((id) => `${contractAddress}-${id}`)
-      )
-      .flat(),
-  ];
-
-  const metadatas = await ctx.store
-    .find(Metadata, {
-      relations: {
-        emote: true,
-        wearable: true,
-      },
-      where: {
-        network: ModelNetwork.POLYGON,
-        id: In([...metadataIds]),
-      },
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const collections = await ctx.store
-    .find(Collection, {
-      where: {
-        network: ModelNetwork.POLYGON,
-        id: In([...collectionIds]),
-      },
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const bids = await ctx.store
-    .find(Bid, {
-      relations: {
-        nft: true,
-      },
-      where: {
-        id: In([...Array.from(bidIds.values())]),
-        network: ModelNetwork.POLYGON,
-      },
-    })
-    .then((q) => new Map(q.map((i) => [i.id, i])));
-
-  const rarities = await ctx.store
-    .find(Rarity)
-    .then((q) => new Map(q.map((i) => [i.id, i])));
+    .then(toMapById);
 
   return {
     counts,

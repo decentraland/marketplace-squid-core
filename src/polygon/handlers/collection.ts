@@ -30,6 +30,11 @@ import { Log, Transaction } from "@subsquid/evm-processor";
 import { handleMintNFT, handleTransferNFT } from "./nft";
 import { isMint } from "../../common/utils";
 import { StoreContractData } from "../state";
+import type { CollectionData } from "../utils/collectionMulticall";
+
+// Pre-fetched collection data from multicall (the multicall keys results by
+// address, so the per-collection payload is CollectionData without its `address`).
+export type PrefetchedCollectionData = Omit<CollectionData, "address">;
 
 export const handleCollectionCreation = async (
   ctx: Context,
@@ -38,33 +43,48 @@ export const handleCollectionCreation = async (
   storedData: PolygonStoredData,
   usedCredits: boolean = false,
   creditValue?: bigint,
-  txHash?: string
+  txHash?: string,
+  prefetchedData?: PrefetchedCollectionData // ALL pre-fetched data from multicall
 ) => {
   const { collections, counts } = storedData;
-  const collectionContract = new CollectionV2ABI.Contract(ctx, block, address);
   const timestamp = BigInt(block.timestamp / 1000);
-  //   console.log("getting collection data");
-  const [
-    name,
-    symbol,
-    owner,
-    creator,
-    isCompleted,
-    isApproved,
-    isEditable,
-    baseURI,
-    chainId,
-  ] = await Promise.all([
-    collectionContract.name(),
-    collectionContract.symbol(),
-    collectionContract.owner(),
-    collectionContract.creator(),
-    collectionContract.isCompleted(),
-    collectionContract.isApproved(),
-    collectionContract.isEditable(),
-    collectionContract.baseURI(),
-    collectionContract.getChainId(),
-  ]); // @TODO check if multicall would be possible
+  
+  let name: string, symbol: string, owner: string, creator: string;
+  let isCompleted: boolean, isApproved: boolean, isEditable: boolean;
+  let baseURI: string, chainId: bigint;
+
+  // ⚡ Use prefetched data if available (from multicall), otherwise fallback to RPC
+  if (prefetchedData) {
+    name = prefetchedData.name;
+    symbol = prefetchedData.symbol;
+    owner = prefetchedData.owner;
+    creator = prefetchedData.creator;
+    isCompleted = prefetchedData.isCompleted;
+    isApproved = prefetchedData.isApproved;
+    isEditable = prefetchedData.isEditable;
+    baseURI = prefetchedData.baseURI;
+    chainId = prefetchedData.chainId;
+  } else {
+    // Fallback: 9 RPC calls (only if multicall failed)
+    const collectionContract = new CollectionV2ABI.Contract(ctx, block, address);
+    const rpcStart = performance.now();
+    const results = await Promise.all([
+      collectionContract.name(),
+      collectionContract.symbol(),
+      collectionContract.owner(),
+      collectionContract.creator(),
+      collectionContract.isCompleted(),
+      collectionContract.isApproved(),
+      collectionContract.isEditable(),
+      collectionContract.baseURI(),
+      collectionContract.getChainId(),
+    ]);
+    const rpcDuration = performance.now() - rpcStart;
+    const fmt = (ms: number) => ms >= 1000 ? `${(ms/1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+    console.log(`⚠️ handleCollectionCreation RPC fallback for ${address.slice(0,10)}: ${fmt(rpcDuration)}`);
+    
+    [name, symbol, owner, creator, isCompleted, isApproved, isEditable, baseURI, chainId] = results;
+  }
 
   //   console.log("all gotten");
   collections.set(
@@ -439,7 +459,8 @@ export async function handleAddItem(
         block,
         addresses.RaritiesWithOracle
       );
-      const result = await raritiesWithOracle.getRarityByName(rarity.name); // @TODO save this in state
+      // ⚠️ RPC CALL: getRarityByName - called per AddItem when rarity is USD
+      const result = await raritiesWithOracle.getRarityByName(rarity.name);
 
       creationFee = result.price;
     }
