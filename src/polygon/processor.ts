@@ -1,12 +1,8 @@
 import { assertNotNull } from "@subsquid/util-internal";
-import {
-  BlockHeader,
-  DataHandlerContext,
-  EvmBatchProcessor,
-  EvmBatchProcessorFields,
-  Log as _Log,
-  Transaction as _Transaction,
-} from "@subsquid/evm-processor";
+import { DataSourceBuilder, FieldSelection } from "@subsquid/evm-stream";
+import * as evmObjects from "@subsquid/evm-objects";
+import { RpcClient } from "@subsquid/rpc-client";
+import { createLogger, Logger } from "@subsquid/logger";
 import { Store } from "@subsquid/typeorm-store";
 import { ChainId, Network } from "@dcl/schemas";
 import * as CollectionFactoryABI from "./abi/CollectionFactory";
@@ -29,148 +25,181 @@ import { startBlockByNetwork } from "./addresses/startBlocks";
 
 const addresses = getAddresses(Network.MATIC);
 const chainId = process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET;
-const GATEWAY = `https://v2.archive.subsquid.io/network/polygon-${
+
+// SQD Network Portal dataset (replaces the deprecated v2 archive gateway).
+const PORTAL_URL = `https://portal.sqd.dev/datasets/polygon-${
   chainId == ChainId.MATIC_MAINNET ? "mainnet" : "amoy-testnet"
 }`;
 const RPC_ENDPOINT = process.env.RPC_ENDPOINT_POLYGON;
-
-const FINALITY_CONFIRMATION = parseInt(
-  process.env.FINALITY_CONFIRMATION_POLYGON || "500"
-);
 const collections = loadCollections();
 
-export const processor = new EvmBatchProcessor()
-  .setGateway({ url: GATEWAY, apiKey: process.env.SQUID_API_KEY })
-  .setPrometheusPort(parseInt(process.env.POLYGON_PROMETHEUS_PORT || "3001"))
-  .setRpcEndpoint({
-    url: assertNotNull(RPC_ENDPOINT),
-    rateLimit: 10,
-  })
-  .setFinalityConfirmation(FINALITY_CONFIRMATION)
-  .setFields({
-    transaction: {
-      input: true,
+// Field selection for the Portal stream. Portal fetches ONLY these fields — unlike
+// the v2 gateway it does not merge a default set — so anything a handler reads must
+// be listed here (required fields like log topic indices are always present).
+export const fields = {
+  block: { timestamp: true },
+  log: { address: true, topics: true, data: true, transactionHash: true },
+  transaction: { hash: true, from: true, to: true, input: true, value: true },
+} satisfies FieldSelection;
+export type Fields = typeof fields;
+
+// RPC client for contract-state reads (owner(), the collection multicall, rarities,
+// item/store data). Portal only ingests logs/blocks; eth_call still goes through the
+// RPC endpoint, so Portal (data) and RPC (state) run as two independent channels.
+export const rpc = new RpcClient({
+  url: assertNotNull(RPC_ENDPOINT, "RPC_ENDPOINT_POLYGON is not set"),
+  capacity: 10,
+  rateLimit: 10,
+});
+
+export const logger: Logger = createLogger("sqd:polygon");
+
+// A ChainContext for the generated ABI contract wrappers (ContractBase / Multicall),
+// backed by the RPC client above. Shape matches @subsquid/evm-abi's `Chain`.
+export const chainContext = {
+  _chain: {
+    client: {
+      call: <T = any>(method: string, params?: unknown[]): Promise<T> =>
+        rpc.call<T>(method, params as any[]),
     },
-    log: {
-      transactionHash: true,
-    },
-  })
+  },
+};
+
+// Types kept API-compatible with the previous evm-processor exports so handlers and
+// util files do not need to change. `Block` is the block HEADER (matching the prior
+// naming); `Context` is the augmented batch context, including `_chain` for RPC.
+export type Block = evmObjects.BlockHeader<Fields>;
+export type Log = evmObjects.Log<Fields>;
+export type Transaction = evmObjects.Transaction<Fields>;
+export type BlockData = evmObjects.Block<Fields>;
+export interface Context {
+  _chain: typeof chainContext._chain;
+  store: Store;
+  log: Logger;
+  blocks: BlockData[];
+  isHead: boolean;
+}
+
+const collectionV2Topics = [
+  CollectionV2ABI.events.SetGlobalMinter.topic,
+  CollectionV2ABI.events.SetGlobalManager.topic,
+  CollectionV2ABI.events.SetItemMinter.topic,
+  CollectionV2ABI.events.SetItemManager.topic,
+  CollectionV2ABI.events.AddItem.topic,
+  CollectionV2ABI.events.RescueItem.topic,
+  CollectionV2ABI.events.UpdateItemData.topic,
+  CollectionV2ABI.events.Issue.topic,
+  CollectionV2ABI.events.SetApproved.topic,
+  CollectionV2ABI.events.SetEditable.topic,
+  CollectionV2ABI.events.Complete.topic,
+  CollectionV2ABI.events.CreatorshipTransferred.topic,
+  CollectionV2ABI.events.OwnershipTransferred.topic,
+  CollectionV2ABI.events.Transfer.topic,
+];
+
+export const dataSource = new DataSourceBuilder()
+  .setPortal(PORTAL_URL)
   .setBlockRange(getBlockRange(Network.MATIC))
+  .setFields(fields)
   .addLog({
-    address: [addresses.CollectionFactory, addresses.CollectionFactoryV3],
-    topic0: [
-      CollectionFactoryABI.events.ProxyCreated.topic,
-      CollectionFactoryV3ABI.events.ProxyCreated.topic,
-    ],
+    where: {
+      address: [addresses.CollectionFactory, addresses.CollectionFactoryV3],
+      topic0: [
+        CollectionFactoryABI.events.ProxyCreated.topic,
+        CollectionFactoryV3ABI.events.ProxyCreated.topic,
+      ],
+    },
   })
   .addLog({
-    address: [addresses.Marketplace, addresses.MarketplaceV2],
-    topic0: [
-      MarketplaceABI.events.OrderCreated.topic,
-      MarketplaceABI.events.OrderSuccessful.topic,
-      MarketplaceABI.events.OrderCancelled.topic,
-      MarketplaceV2ABI.events.OrderCreated.topic,
-      MarketplaceV2ABI.events.OrderSuccessful.topic,
-      MarketplaceV2ABI.events.OrderCancelled.topic,
-    ],
+    where: {
+      address: [addresses.Marketplace, addresses.MarketplaceV2],
+      topic0: [
+        MarketplaceABI.events.OrderCreated.topic,
+        MarketplaceABI.events.OrderSuccessful.topic,
+        MarketplaceABI.events.OrderCancelled.topic,
+        MarketplaceV2ABI.events.OrderCreated.topic,
+        MarketplaceV2ABI.events.OrderSuccessful.topic,
+        MarketplaceV2ABI.events.OrderCancelled.topic,
+      ],
+    },
   })
   .addLog({
-    address: [addresses.Bid, addresses.BidV2],
-    topic0: [
-      BidABI.events.BidCreated.topic,
-      BidABI.events.BidAccepted.topic,
-      BidABI.events.BidCancelled.topic,
-    ],
+    where: {
+      address: [addresses.Bid, addresses.BidV2],
+      topic0: [
+        BidABI.events.BidCreated.topic,
+        BidABI.events.BidAccepted.topic,
+        BidABI.events.BidCancelled.topic,
+      ],
+    },
   })
   .addLog({
-    address: [addresses.OldCommittee, addresses.Committee],
-    topic0: [CommitteeABI.events.MemberSet.topic],
+    where: {
+      address: [addresses.OldCommittee, addresses.Committee],
+      topic0: [CommitteeABI.events.MemberSet.topic],
+    },
   })
   .addLog({
-    transaction: true,
-    address: collections.addresses,
-    topic0: [
-      CollectionV2ABI.events.SetGlobalMinter.topic,
-      CollectionV2ABI.events.SetGlobalManager.topic,
-      CollectionV2ABI.events.SetItemMinter.topic,
-      CollectionV2ABI.events.SetItemManager.topic,
-      CollectionV2ABI.events.AddItem.topic,
-      CollectionV2ABI.events.RescueItem.topic,
-      CollectionV2ABI.events.UpdateItemData.topic,
-      CollectionV2ABI.events.Issue.topic,
-      CollectionV2ABI.events.SetApproved.topic,
-      CollectionV2ABI.events.SetEditable.topic,
-      CollectionV2ABI.events.Complete.topic,
-      CollectionV2ABI.events.CreatorshipTransferred.topic,
-      CollectionV2ABI.events.OwnershipTransferred.topic,
-      CollectionV2ABI.events.Transfer.topic,
-    ],
+    where: { address: collections.addresses, topic0: collectionV2Topics },
+    include: { transaction: true },
     range: {
       from: startBlockByNetwork[parseInt(chainId.toString())].Factory,
       to: collections.height,
     },
   })
   .addLog({
-    transaction: true,
-    topic0: [
-      CollectionV2ABI.events.SetGlobalMinter.topic,
-      CollectionV2ABI.events.SetGlobalManager.topic,
-      CollectionV2ABI.events.SetItemMinter.topic,
-      CollectionV2ABI.events.SetItemManager.topic,
-      CollectionV2ABI.events.AddItem.topic,
-      CollectionV2ABI.events.RescueItem.topic,
-      CollectionV2ABI.events.UpdateItemData.topic,
-      CollectionV2ABI.events.Issue.topic,
-      CollectionV2ABI.events.SetApproved.topic,
-      CollectionV2ABI.events.SetEditable.topic,
-      CollectionV2ABI.events.Complete.topic,
-      CollectionV2ABI.events.CreatorshipTransferred.topic,
-      CollectionV2ABI.events.OwnershipTransferred.topic,
-      CollectionV2ABI.events.Transfer.topic,
-    ],
+    where: { topic0: collectionV2Topics },
+    include: { transaction: true },
     range: { from: collections.height + 1 },
   })
   .addLog({
-    transaction: true,
-    address: [addresses.Rarity, addresses.RaritiesWithOracle],
-    topic0: [
-      RaritiesABI.events.AddRarity.topic,
-      RaritiesABI.events.UpdatePrice.topic,
-      RaritiesWithOracleABI.events.AddRarity.topic,
-      RaritiesWithOracleABI.events.UpdatePrice.topic,
-    ],
+    where: {
+      address: [addresses.Rarity, addresses.RaritiesWithOracle],
+      topic0: [
+        RaritiesABI.events.AddRarity.topic,
+        RaritiesABI.events.UpdatePrice.topic,
+        RaritiesWithOracleABI.events.AddRarity.topic,
+        RaritiesWithOracleABI.events.UpdatePrice.topic,
+      ],
+    },
+    include: { transaction: true },
   })
   .addLog({
-    transaction: true,
-    address: [addresses.CollectionManager],
-    topic0: [CollectionManagerABI.events.RaritiesSet.topic],
+    where: {
+      address: [addresses.CollectionManager],
+      topic0: [CollectionManagerABI.events.RaritiesSet.topic],
+    },
+    include: { transaction: true },
   })
   .addLog({
-    transaction: true,
-    address: [addresses.MarketplaceV3],
-    topic0: [MarketplaceV3.events.Traded.topic],
+    where: {
+      address: [addresses.MarketplaceV3],
+      topic0: [MarketplaceV3.events.Traded.topic],
+    },
+    include: { transaction: true },
   })
   .addLog({
-    transaction: true,
-    address: [addresses.MarketplaceV3_V2],
-    topic0: [MarketplaceV3.events.Traded.topic],
+    where: {
+      address: [addresses.MarketplaceV3_V2],
+      topic0: [MarketplaceV3.events.Traded.topic],
+    },
+    include: { transaction: true },
   })
   .addLog({
-    transaction: true,
-    address: addresses.CreditsManager,
-    topic0: [CreditsManagerABI.events.CreditUsed.topic],
+    where: {
+      address: addresses.CreditsManager,
+      topic0: [CreditsManagerABI.events.CreditUsed.topic],
+    },
+    include: { transaction: true },
   })
   .addLog({
-    transaction: true,
-    address: [addresses.Spoke],
-    topic0: [SpokeABI.events.OrderCreated.topic],
+    where: {
+      address: [addresses.Spoke],
+      topic0: [SpokeABI.events.OrderCreated.topic],
+    },
+    include: { transaction: true },
     range: {
       from: startBlockByNetwork[parseInt(chainId.toString())].Spoke,
     },
-  });
-
-export type Fields = EvmBatchProcessorFields<typeof processor>;
-export type Context = DataHandlerContext<Store, Fields>;
-export type Block = BlockHeader<Fields>;
-export type Log = _Log<Fields>;
-export type Transaction = _Transaction<Fields>;
+  })
+  .build();

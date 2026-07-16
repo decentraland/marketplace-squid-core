@@ -1,4 +1,4 @@
-import { BlockData, Transaction } from "@subsquid/evm-processor";
+import { BlockData, Transaction } from "../processor";
 import { Network } from "@dcl/schemas";
 import {
   OrderCancelledEventArgs,
