@@ -1,4 +1,4 @@
-import { BlockData, Log } from "@subsquid/evm-processor";
+import { BlockData, Log } from "./processor";
 import * as landRegistryABI from "../abi/LANDRegistry";
 import * as erc721abi from "../abi/ERC721";
 import * as estateRegistryABI from "../abi/EstateRegistry";

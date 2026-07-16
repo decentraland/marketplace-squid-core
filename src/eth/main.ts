@@ -1,4 +1,6 @@
 import { TypeormDatabase } from "@subsquid/typeorm-store";
+import { run } from "@subsquid/batch-processor";
+import * as evmObjects from "@subsquid/evm-objects";
 import { Network } from "@dcl/schemas";
 import * as landRegistryABI from "../abi/LANDRegistry";
 import * as erc721abi from "../abi/ERC721";
@@ -10,7 +12,7 @@ import * as dclControllerV2abi from "../abi/DCLControllerV2";
 import * as MarketplaceV3ABI from "../abi/DecentralandMarketplaceEthereum";
 import * as SpokeABI from "../abi/Spoke";
 import { Order, Sale, Transfer, Network as ModelNetwork } from "../model";
-import { processor } from "./processor";
+import { dataSource, chainContext, logger, Context } from "./processor";
 import { getNFTId } from "../common/utils";
 import { tokenURIMutilcall } from "../common/utils/multicall";
 import { getAddresses } from "../common/utils/addresses";
@@ -93,13 +95,25 @@ let indicesNeedRecreation = false;
 const ETH_INITIAL_BLOCK = getBlockRange(Network.ETHEREUM).from;
 
 const schemaName = process.env.DB_SCHEMA;
-processor.run(
-  new TypeormDatabase({
-    isolationLevel: "READ COMMITTED",
-    supportHotBlocks: true,
-    stateSchema: `eth_processor_${schemaName}`,
-  }),
-  async (ctx) => {
+const db = new TypeormDatabase({
+  isolationLevel: "READ COMMITTED",
+  // Portal ingests from the finalized stream; a log-filtered stream yields
+  // non-contiguous blocks which the hot-block path rejects. Finality on Ethereum
+  // is ~15 min behind head — acceptable for the marketplace indexer.
+  supportHotBlocks: false,
+  stateSchema: `eth_processor_${schemaName}`,
+});
+run(dataSource, db, async (simpleCtx) => {
+  // The batch-processor base context is bare {store, blocks, isHead}; augment the
+  // blocks (restores block.logs / log.transaction back-refs) and attach `_chain`
+  // (RPC for contract reads) and a logger, so the rest of the handler and the ABI
+  // contract wrappers see the same shape the old evm-processor context provided.
+  const ctx: Context = {
+    ...simpleCtx,
+    ...chainContext,
+    log: logger,
+    blocks: simpleCtx.blocks.map(evmObjects.augmentBlock),
+  };
     // update the amount of bytes read
     bytesRead += ctx.blocks.reduce(
       (acc, block) => acc + Buffer.byteLength(JSON.stringify(block), "utf8"),

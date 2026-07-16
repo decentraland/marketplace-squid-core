@@ -64,7 +64,9 @@ import {
   handleTransferOwnership,
   handleUpdateItemData,
 } from "./handlers/collection";
-import { processor } from "./processor";
+import { dataSource, chainContext, logger, Context } from "./processor";
+import { run } from "@subsquid/batch-processor";
+import * as evmObjects from "@subsquid/evm-objects";
 import {
   getBatchInMemoryState,
   getBidV2ContractData,
@@ -310,13 +312,25 @@ async function performUpserts(
   return { timing, nftsWithOrdersCount: nftsWithOrders.length };
 }
 
-processor.run(
-  new TypeormDatabase({
-    isolationLevel: "READ COMMITTED",
-    supportHotBlocks: true,
-    stateSchema: `polygon_processor_${schemaName}`,
-  }),
-  async (ctx) => {
+const db = new TypeormDatabase({
+  isolationLevel: "READ COMMITTED",
+  // Portal ingests from the finalized stream; a log-filtered stream yields
+  // non-contiguous blocks which the hot-block path rejects. Polygon finality is
+  // only a few blocks (~seconds) behind head, so this stays effectively real-time.
+  supportHotBlocks: false,
+  stateSchema: `polygon_processor_${schemaName}`,
+});
+run(dataSource, db, async (simpleCtx) => {
+  // The batch-processor base context is bare {store, blocks, isHead}; augment the
+  // blocks (restores block.logs / log.transaction back-refs) and attach `_chain`
+  // (RPC for contract reads) and a logger, so the rest of the handler and the ABI
+  // contract wrappers see the same shape the old evm-processor context provided.
+  const ctx: Context = {
+    ...simpleCtx,
+    ...chainContext,
+    log: logger,
+    blocks: simpleCtx.blocks.map(evmObjects.augmentBlock),
+  };
     const batchStartTime = performance.now();
     const metrics = {
       blockRange: `${ctx.blocks[0].header.height}-${

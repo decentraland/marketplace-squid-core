@@ -1,9 +1,7 @@
-import { BlockData } from "@subsquid/evm-processor";
 import {
   Contract as ERC721Contract,
   TransferEventArgs_2,
 } from "../../abi/ERC721";
-import { Block, Context } from "../../eth/processor";
 import {
   Account,
   Category,
@@ -55,9 +53,19 @@ export function getNFTId(
     : contractAddress + "-" + tokenId;
 }
 
+// Minimal structural types for RPC contract reads: only what ContractBase needs.
+// Both the Polygon (evm-processor) and ETH (Portal + rpc-client) contexts satisfy
+// these, so this helper stays shared across processors without coupling to either.
+type RpcContext = {
+  _chain: {
+    client: { call: <T = any>(method: string, params?: unknown[]) => Promise<T> };
+  };
+};
+type RpcBlock = { height: number };
+
 export async function getTokenURI(
-  ctx: Context,
-  block: Block,
+  ctx: RpcContext,
+  block: RpcBlock,
   contractAddress: string,
   tokenId: bigint
 ): Promise<string> {
@@ -67,8 +75,8 @@ export async function getTokenURI(
 }
 
 export async function getOwner(
-  ctx: Context,
-  block: Block,
+  ctx: RpcContext,
+  block: RpcBlock,
   contractAddress: string,
   tokenId: bigint
 ): Promise<string> {

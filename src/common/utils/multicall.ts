@@ -9,6 +9,7 @@ import { getAddresses } from "./addresses";
 const MULTICALL_CONTRACT = "0xcA11bde05977b3631167028862bE2a173976CA11"; // has the same address on different networks
 const hardcodedMulticallCreationBlock = {
   id: "0014353601-7a3f0",
+  number: 14353601,
   height: 14353601,
   hash: "0x7a3f054738fa78c0a9c34a0f4216e40d858a8b086a666860783e9950dbeaf647",
   parentHash:

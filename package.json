@@ -2,16 +2,23 @@
   "name": "squid-evm-template",
   "private": true,
   "scripts": {
-    "build": "rm -rf lib && tsc"
+    "build": "rm -rf lib && tsc",
+    "db:migrate": "npx squid-typeorm-migration apply",
+    "processor:polygon": "node lib/polygon/main.js",
+    "processor:eth": "node lib/eth/main.js"
   },
   "dependencies": {
     "@aws-sdk/client-sns": "^3.936.0",
     "@dcl/schemas": "^20.2.1",
     "@graphile/pg-aggregates": "^0.1.1",
     "@slack/bolt": "^4.2.1",
+    "@subsquid/batch-processor": "^1.0.0",
     "@subsquid/evm-abi": "^0.3.1",
     "@subsquid/evm-codec": "^0.3.0",
+    "@subsquid/evm-objects": "^0.0.3",
     "@subsquid/evm-processor": "^1.30.1",
+    "@subsquid/evm-stream": "^0.1.1",
+    "@subsquid/rpc-client": "^4.15.0",
     "@subsquid/file-store": "^2.0.0",
     "@subsquid/graphql-server": "^4.9.0",
     "@subsquid/openreader": "^5.2.0",

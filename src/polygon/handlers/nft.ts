@@ -26,7 +26,7 @@ import { TradedEventArgs } from "../abi/DecentralandMarketplacePolygon";
 import { setNFTSearchFields } from "../modules/metadata";
 import { Block, Context } from "../processor";
 import { PolygonInMemoryState, PolygonStoredData } from "../types";
-import { Transaction } from "@subsquid/evm-processor";
+import { Transaction } from "../processor";
 import { trackSale } from "../modules/analytics";
 import { StoreContractData } from "../state";
 

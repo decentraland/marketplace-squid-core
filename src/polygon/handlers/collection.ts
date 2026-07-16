@@ -26,7 +26,7 @@ import {
   getBlockWhereRescueItemsStarted,
   getCurationId,
 } from "../modules/curation";
-import { Log, Transaction } from "@subsquid/evm-processor";
+import { Log, Transaction } from "../processor";
 import { handleMintNFT, handleTransferNFT } from "./nft";
 import { isMint } from "../../common/utils";
 import { StoreContractData } from "../state";

@@ -1,4 +1,4 @@
-import { BlockData } from "@subsquid/evm-processor";
+import { BlockData } from "../processor";
 import { Network } from "@dcl/schemas";
 import { UpdateEventArgs } from "../../abi/LANDRegistry";
 import { getNFTId } from "../../common/utils/nft";
