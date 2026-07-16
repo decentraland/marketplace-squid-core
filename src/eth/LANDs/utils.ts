@@ -1,4 +1,4 @@
-import { BlockData } from "@subsquid/evm-processor";
+import { BlockData } from "../processor";
 import { Contract as LANDRegistryContract } from "../../abi/LANDRegistry";
 import { Estate, NFT, Parcel } from "../../model";
 import { Context } from "../processor";
