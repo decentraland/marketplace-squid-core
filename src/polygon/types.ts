@@ -1,4 +1,4 @@
-import { BlockData, Log, Transaction } from "@subsquid/evm-processor";
+import { BlockData, Log, Transaction } from "./processor";
 import * as CollectionV2 from "./abi/CollectionV2";
 import * as CollectionFactoryV3ABI from "./abi/CollectionFactoryV3";
 import * as erc721abi from "../abi/ERC721";
