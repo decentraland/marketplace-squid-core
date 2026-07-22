@@ -1,5 +1,5 @@
 import { TypeormDatabase } from "@subsquid/typeorm-store";
-import { run } from "@subsquid/batch-processor";
+import { run, PrometheusServer } from "@subsquid/batch-processor";
 import * as evmObjects from "@subsquid/evm-objects";
 import { Network } from "@dcl/schemas";
 import * as landRegistryABI from "../abi/LANDRegistry";
@@ -103,6 +103,11 @@ const db = new TypeormDatabase({
   supportHotBlocks: false,
   stateSchema: `eth_processor_${schemaName}`,
 });
+// Expose Prometheus metrics (sqd_processor_last_block / chain_height) — the squid
+// management server scrapes /metrics on this port to detect a live processor.
+// setGateway used to start this; with the Portal run() we wire it explicitly.
+const prometheus = new PrometheusServer();
+prometheus.setPort(Number(process.env.ETH_PROMETHEUS_PORT || 3000));
 run(dataSource, db, async (simpleCtx) => {
   // The batch-processor base context is bare {store, blocks, isHead}; augment the
   // blocks (restores block.logs / log.transaction back-refs) and attach `_chain`
@@ -1075,5 +1080,6 @@ run(dataSource, db, async (simpleCtx) => {
     } catch (error) {
       ctx.log.error(`error: ${error}`);
     }
-  }
+  },
+  { prometheus }
 );
