@@ -65,7 +65,7 @@ import {
   handleUpdateItemData,
 } from "./handlers/collection";
 import { dataSource, chainContext, logger, Context } from "./processor";
-import { run } from "@subsquid/batch-processor";
+import { run, PrometheusServer } from "@subsquid/batch-processor";
 import * as evmObjects from "@subsquid/evm-objects";
 import {
   getBatchInMemoryState,
@@ -320,6 +320,11 @@ const db = new TypeormDatabase({
   supportHotBlocks: false,
   stateSchema: `polygon_processor_${schemaName}`,
 });
+// Expose Prometheus metrics (sqd_processor_last_block / chain_height) — the squid
+// management server scrapes /metrics on this port to detect a live processor.
+// setGateway used to start this; with the Portal run() we wire it explicitly.
+const prometheus = new PrometheusServer();
+prometheus.setPort(Number(process.env.POLYGON_PROMETHEUS_PORT || 3001));
 run(dataSource, db, async (simpleCtx) => {
   // The batch-processor base context is bare {store, blocks, isHead}; augment the
   // blocks (restores block.logs / log.transaction back-refs) and attach `_chain`
@@ -1830,5 +1835,6 @@ run(dataSource, db, async (simpleCtx) => {
       `Batch ${metrics.blockRange} saved: nfts=${nfts.size}, items=${items.size}, sales=${sales.size}, mints=${mints.size}, transfers=${transfers.size}`
     );
 
-  }
+  },
+  { prometheus }
 );
