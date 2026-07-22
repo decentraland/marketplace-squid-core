@@ -37,6 +37,7 @@ import {
   TradeType,
 } from "../../common/utils/marketplaceV3";
 import { normalizeTimestamp } from "../../common/utils/utils";
+import { selectIssueLogForTrade } from "../utils/issueLog";
 
 export type MarkteplaceEvents =
   | OrderCreatedEventArgs
@@ -318,16 +319,22 @@ export async function handleTraded(
     // item land in the same block (different txs), every read returns the same
     // final totalSupply, so all simulated Issues collide on the same nftId and
     // the earlier mints get overwritten in storage.
-    // Edge case: if a single tx mints the same itemId twice (batch aggregator),
-    // find() returns the first matching Issue. Not a regression vs. the previous
-    // implementation; would need the current Traded log's logIndex to disambiguate.
-    const issueLog = block.logs.find(
-      (l) =>
-        l.transactionIndex === transaction.transactionIndex &&
-        l.address.toLowerCase() === collectionAddress.toLowerCase() &&
-        l.topics[0] === CollectionV2ABI.events.Issue.topic &&
-        BigInt(l.topics[3]) === BigInt(itemId)
-    );
+    //
+    // A single tx can also mint the same itemId multiple times (e.g. buying
+    // several units at once). That emits one Issue log per unit (differing only
+    // by issuedId/tokenId) and one Traded event per unit. Traded events are
+    // processed in log order, so we consume the matching Issue logs in
+    // ascending logIndex order, skipping any already matched to a previous
+    // Traded event in this batch. A plain find() would return the first Issue
+    // log every time and drop every mint after the first for that item.
+    const issueLog = selectIssueLogForTrade<(typeof block.logs)[number]>(block.logs, {
+      transactionIndex: transaction.transactionIndex,
+      collectionAddress,
+      itemId: BigInt(itemId),
+      issueTopic: CollectionV2ABI.events.Issue.topic,
+      blockHeight: block.header.height,
+      consumedIssueLogs: inMemoryData.consumedIssueLogs,
+    });
     if (!issueLog) {
       console.log(
         `ERROR: Issue log not found for trade tx ${transaction.hash} item ${itemId}`
