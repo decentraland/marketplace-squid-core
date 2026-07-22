@@ -53,6 +53,12 @@ export type PolygonInMemoryState = {
   analyticsIds: Set<string>;
   itemDayDataIds: Set<string>;
   bidIds: Set<string>;
+  // Issue logs (keyed by `${blockHeight}-${logIndex}`) already matched to a
+  // MarketplaceV3 Traded event during this batch. Ensures that when a single
+  // transaction mints the same item several times, each Traded event consumes a
+  // distinct Issue log (distinct issuedId/tokenId) instead of all resolving to
+  // the first one.
+  consumedIssueLogs: Set<string>;
   // events
   transferEvents: Map<
     string,

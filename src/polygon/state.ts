@@ -24,6 +24,7 @@ export const getBatchInMemoryState: () => PolygonInMemoryState = () => ({
   analyticsIds: new Set(),
   itemDayDataIds: new Set(),
   bidIds: new Set(),
+  consumedIssueLogs: new Set(),
   itemIds: new Map(),
   // events
   transferEvents: new Map(),

@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "rm -rf lib && tsc",
+    "test": "npm run build && node --test \"lib/**/*.test.js\"",
     "db:migrate": "npx squid-typeorm-migration apply",
     "processor:polygon": "node lib/polygon/main.js",
     "processor:eth": "node lib/eth/main.js"
