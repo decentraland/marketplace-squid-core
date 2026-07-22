@@ -49,8 +49,9 @@ export function selectIssueLogForTrade<T extends IssueLogLike>(
       (l) =>
         l.transactionIndex === transactionIndex &&
         l.address.toLowerCase() === collectionAddress.toLowerCase() &&
+        l.topics.length >= 4 &&
         l.topics[0] === issueTopic &&
-        BigInt(l.topics[3]) === BigInt(itemId)
+        BigInt(l.topics[3]) === itemId
     )
     .sort((a, b) => a.logIndex - b.logIndex);
 
