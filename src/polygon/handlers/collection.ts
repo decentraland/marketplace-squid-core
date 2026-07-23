@@ -233,11 +233,11 @@ export function handleSetGlobalMinter(
           let isMarketplaceV3ItemMinter = false;
           const itemMinters = item.minters;
           for (let j = 0; j < item.minters.length; j++) {
-            if (storeAddress == itemMinters[i]) {
+            if (storeAddress == itemMinters[j]) {
               isStoreItemMinter = true;
             } else if (
-              marketplaceV3Address == itemMinters[i] ||
-              marketplaceV3_V2Address == itemMinters[i]
+              marketplaceV3Address == itemMinters[j] ||
+              marketplaceV3_V2Address == itemMinters[j]
             ) {
               isMarketplaceV3ItemMinter = true;
             }
