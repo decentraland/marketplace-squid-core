@@ -208,27 +208,29 @@ export function handleSetGlobalMinter(
       }
     }
 
-    // unset flag on collection
+    // recompute flags after removing a global minter
     if (
       minterAddress === storeAddress ||
       minterAddress === marketplaceV3Address ||
       minterAddress === marketplaceV3_V2Address
     ) {
-      if (minterAddress === storeAddress) {
-        collection.searchIsStoreMinter = false;
-      } else if (
-        minterAddress === marketplaceV3Address ||
-        minterAddress === marketplaceV3_V2Address
-      ) {
-        collection.searchIsMarketplaceV3Minter = false;
-      }
-      // loop over all items and unset flag (only if store is not an item minter)
+      // A collection can have several global minters at once (e.g. both MarketplaceV3 addresses during
+      // a migration). Removing one must not clear a flag that a remaining global minter should keep set,
+      // so recompute from the minters that survive the removal rather than from the removed address.
+      const hasStoreGlobalMinter = newMinters.includes(storeAddress);
+      const hasMarketplaceV3GlobalMinter =
+        newMinters.includes(marketplaceV3Address) || newMinters.includes(marketplaceV3_V2Address);
+
+      collection.searchIsStoreMinter = hasStoreGlobalMinter;
+      collection.searchIsMarketplaceV3Minter = hasMarketplaceV3GlobalMinter;
+
+      // An item is still mintable via the store/marketplace if a global minter remains OR the item has
+      // its own item-level minter, so combine both rather than looking only at item-level minters.
       const itemCount = collection.itemsCount;
       for (let i = 0; i < itemCount; i++) {
         const itemId = getItemId(collectionAddress, i.toString());
         const item = items.get(itemId);
         if (item) {
-          // check if store is item minter
           let isStoreItemMinter = false;
           let isMarketplaceV3ItemMinter = false;
           const itemMinters = item.minters;
@@ -242,9 +244,8 @@ export function handleSetGlobalMinter(
               isMarketplaceV3ItemMinter = true;
             }
           }
-          // set flag only if store is item minter, otherwise unset it
-          item.searchIsStoreMinter = isStoreItemMinter;
-          item.searchIsMarketplaceV3Minter = isMarketplaceV3ItemMinter;
+          item.searchIsStoreMinter = hasStoreGlobalMinter || isStoreItemMinter;
+          item.searchIsMarketplaceV3Minter = hasMarketplaceV3GlobalMinter || isMarketplaceV3ItemMinter;
         } else {
           console.log(`ERROR: Item not found: ${itemId}`);
         }
