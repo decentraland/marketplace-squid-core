@@ -55,6 +55,25 @@ export const getTradeEventType = (
   }
 };
 
+/**
+ * Who sold and who bought, from a Traded event.
+ *
+ * `sent` and `received` are written from the SIGNER's perspective, and a `beneficiary` answers "who
+ * receives this asset". For the ASSET leg that is the same question as "who bought it", so the buyer is
+ * still read from there. For the PAYMENT leg it is not: it answers "who gets paid", which coincided with
+ * "who sold" only for as long as every seller was paid directly.
+ *
+ * They stopped coinciding. The Shop signs listings whose payment beneficiary is the platform treasury,
+ * which credits the seller off-chain instead. Reading the seller off that beneficiary attributed every
+ * such sale to the treasury: the seller's own sales vanished from `/v1/sales?seller=`, and
+ * `updateCreatorsSupportedSet` recorded the treasury rather than the creator the buyer actually supported.
+ *
+ * So the counterparty on the paid side comes from the trade itself, which no beneficiary can redirect —
+ * an Order is signed by its seller, and a Bid is accepted (called) by its seller.
+ *
+ * Historical rows are unaffected: where nobody redirected the payment, the payment beneficiary and the
+ * signer/caller are the same address, so a reindex reproduces them identically.
+ */
 export const getTradeEventData = (event: TradedEventArgs, network: Network) => {
   const tradeType = getTradeEventType(event, network);
   if (tradeType === TradeType.Order) {
@@ -68,7 +87,9 @@ export const getTradeEventData = (event: TradedEventArgs, network: Network) => {
         Number(event._trade.sent[0].assetType) === TradeAssetType.ITEM
           ? event._trade.sent[0].value
           : undefined,
-      seller: event._trade.received[0].beneficiary,
+      // The listing's signer. NOT received[0].beneficiary — that is whoever the payment was directed to,
+      // which the Shop points at the platform treasury.
+      seller: event._trade.signer,
       buyer: event._trade.sent[0].beneficiary,
       price: event._trade.received[0].value,
       assetType: event._trade.sent[0].assetType,
@@ -84,7 +105,10 @@ export const getTradeEventData = (event: TradedEventArgs, network: Network) => {
         Number(event._trade.received[0].assetType) === TradeAssetType.ITEM
           ? event._trade.received[0].value
           : undefined,
-      seller: event._trade.sent[0].beneficiary,
+      // A bid is signed by the buyer and ACCEPTED by the seller, so the caller is the seller. Same
+      // reasoning as the Order branch above, applied to the other direction: sent[0].beneficiary is
+      // where the MANA goes, which is not necessarily who sold.
+      seller: event._caller,
       buyer: event._trade.received[0].beneficiary,
       price: event._trade.sent[0].value,
       assetType: event._trade.received[0].assetType,
