@@ -68,11 +68,16 @@ export const getTradeEventType = (
  * such sale to the treasury: the seller's own sales vanished from `/v1/sales?seller=`, and
  * `updateCreatorsSupportedSet` recorded the treasury rather than the creator the buyer actually supported.
  *
- * So the counterparty on the paid side comes from the trade itself, which no beneficiary can redirect —
- * an Order is signed by its seller, and a Bid is accepted (called) by its seller.
+ * An order's seller therefore comes from `_trade.signer`, which is recovered from the EIP-712 signature
+ * and cannot be redirected by anything in the trade.
  *
- * Historical rows are unaffected: where nobody redirected the payment, the payment beneficiary and the
- * signer/caller are the same address, so a reindex reproduces them identically.
+ * A bid has no such field — a bid is signed by its BUYER, so the seller appears nowhere in the signed
+ * trade — and `msg.sender` is not a substitute, because a contract is routinely in between (see the Bid
+ * branch). It keeps reading the payment beneficiary, which is correct until something redirects a bid's
+ * payment; nothing does.
+ *
+ * Historical rows are unaffected: with no redirection the signer and the payment beneficiary are the
+ * same address, so a reindex reproduces them identically.
  */
 export const getTradeEventData = (event: TradedEventArgs, network: Network) => {
   const tradeType = getTradeEventType(event, network);
@@ -105,10 +110,22 @@ export const getTradeEventData = (event: TradedEventArgs, network: Network) => {
         Number(event._trade.received[0].assetType) === TradeAssetType.ITEM
           ? event._trade.received[0].value
           : undefined,
-      // A bid is signed by the buyer and ACCEPTED by the seller, so the caller is the seller. Same
-      // reasoning as the Order branch above, applied to the other direction: sent[0].beneficiary is
-      // where the MANA goes, which is not necessarily who sold.
-      seller: event._caller,
+      // Where the MANA goes. `_caller` looks like the better answer — a bid IS accepted by its seller —
+      // but only when the seller calls the marketplace directly. `msg.sender` is a CONTRACT whenever the
+      // acceptance is mediated: the CreditsManager forwards `accept()` for credits purchases, and the
+      // dapps send `executeMetaTransaction` through a relay. Measured on dev: of 42 order sales the
+      // caller is the buyer 35 times and some other address 7 times; of 256 mints it is neither party
+      // 144 times. Bids are simply the case that has not been mediated yet (22/22 called by the seller).
+      //
+      // So the two candidates fail in opposite situations, and this one's does not exist yet: the
+      // beneficiary is wrong only if a bid's payment is REDIRECTED, which nothing does today, whereas
+      // `_caller` is wrong as soon as anything mediates the call — already routine everywhere else.
+      //
+      // Unlike an order, a bid's seller is not in the signed trade at all (the BUYER signs a bid), so no
+      // on-chain field identifies them once a contract sits in between. If the Shop ever routes bid
+      // proceeds to the treasury, resolve the seller from the off-chain trade record — which knows both
+      // counterparties — rather than from another guess on this event.
+      seller: event._trade.sent[0].beneficiary,
       buyer: event._trade.received[0].beneficiary,
       price: event._trade.sent[0].value,
       assetType: event._trade.received[0].assetType,

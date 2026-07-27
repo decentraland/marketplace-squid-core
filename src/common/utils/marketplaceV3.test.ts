@@ -7,6 +7,7 @@ process.env.POLYGON_CHAIN_ID = "80002";
 
 import { Network } from "@dcl/schemas";
 
+import { TradedEventArgs } from "../../abi/DecentralandMarketplaceEthereum";
 import { getTradeEventData, TradeAssetType } from "./marketplaceV3";
 import { MANA } from "../../polygon/addresses/amoy";
 
@@ -23,6 +24,8 @@ const SELLER = "0x2a4f9a28ba76413ef182351d864cc2916e462c3b";
 const BUYER = "0x747c6f502272129bf1ba872a1903045b837ee86c";
 const TREASURY = "0x3eedeceafa4797d36819c1d9f8e3b0071285ad69";
 const COLLECTION = "0x03b1940d80394614a5ba60abbf73fa749068bdad";
+/** The CreditsManager on Amoy — the msg.sender for every credits-funded purchase. */
+const CONTRACT = "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3";
 
 type Asset = {
   assetType: number;
@@ -55,7 +58,7 @@ const tradedEvent = (opts: {
     _caller: opts.caller,
     _signature: "0x" + "0".repeat(64),
     _trade: { signer: opts.signer, sent: opts.sent, received: opts.received },
-  } as never);
+  } as unknown as TradedEventArgs);
 
 describe("getTradeEventData — sale attribution", () => {
   describe("an order (a listing, signed by its seller)", () => {
@@ -66,6 +69,24 @@ describe("getTradeEventData — sale attribution", () => {
       const event = tradedEvent({
         signer: SELLER,
         caller: BUYER,
+        sent: [asset({ beneficiary: BUYER })],
+        received: [manaAsset(TREASURY, TradeAssetType.USD_PEGGED_MANA)],
+      });
+
+      const data = getTradeEventData(event, Network.MATIC);
+
+      assert.strictEqual(data.seller, SELLER);
+      assert.strictEqual(data.buyer, BUYER);
+    });
+
+    it("should be immune to a contract standing in for msg.sender", () => {
+      // The exact shape of the sale that exposed all of this on dev: paid with credits, so the
+      // CreditsManager forwarded `accept()` and msg.sender was neither party. The signer is recovered
+      // from the signature, so mediation cannot touch it — which is why the order branch reads it and
+      // the bid branch (where no signed field names the seller) cannot.
+      const event = tradedEvent({
+        signer: SELLER,
+        caller: CONTRACT,
         sent: [asset({ beneficiary: BUYER })],
         received: [manaAsset(TREASURY, TradeAssetType.USD_PEGGED_MANA)],
       });
@@ -108,14 +129,16 @@ describe("getTradeEventData — sale attribution", () => {
     });
   });
 
-  describe("a bid (signed by its buyer, accepted by its seller)", () => {
-    it("should attribute the sale to the caller who accepted, not to whoever was paid", () => {
-      // The same hazard mirrored. No bid redirects its payment today, so this is a guard rather than a
-      // fix — it keeps the invariant true if the Shop ever routes bid proceeds too.
+  describe("a bid (signed by its buyer — the seller is not in the signed trade)", () => {
+    it("should read the seller from the payment beneficiary, not from msg.sender", () => {
+      // THE case `_caller` got wrong. A CreditsManager or a meta-transaction relay sits between the
+      // seller and the marketplace, so msg.sender is a CONTRACT — attributing the sale to it. Measured
+      // on dev, that already happens for 7 of 42 order sales and 144 of 256 mints; bids are only spared
+      // because nothing mediates them yet.
       const event = tradedEvent({
         signer: BUYER,
-        caller: SELLER,
-        sent: [manaAsset(TREASURY)],
+        caller: CONTRACT,
+        sent: [manaAsset(SELLER)],
         received: [asset({ beneficiary: BUYER })],
       });
 
@@ -125,7 +148,9 @@ describe("getTradeEventData — sale attribution", () => {
       assert.strictEqual(data.buyer, BUYER);
     });
 
-    it("should be unchanged when the seller is paid directly", () => {
+    it("should read the seller from the payment beneficiary when they called directly", () => {
+      // Every bid on dev today (22/22): caller and payment beneficiary are the same address, so this
+      // holds either way. It is here to pin that the reindex is a no-op for existing bid rows.
       const event = tradedEvent({
         signer: BUYER,
         caller: SELLER,
