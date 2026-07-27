@@ -1,8 +1,9 @@
 import "dotenv/config";
 
 import { ChainId, Network } from "@dcl/schemas";
-import { assertNotNull } from "@subsquid/util-internal";
-import { EvmBatchProcessor } from "@subsquid/evm-processor";
+import { run } from "@subsquid/batch-processor";
+import { createLogger } from "@subsquid/logger";
+import { DataSourceBuilder } from "@subsquid/evm-stream";
 import { Database, LocalDest } from "@subsquid/file-store";
 import { getAddresses } from "../../common/utils/addresses";
 import * as CollectionFactoryABI from "../abi/CollectionFactory";
@@ -18,6 +19,7 @@ const fromsV3: Record<string, any> = {
   [ChainId.MATIC_AMOY]: 5763249,
 };
 
+const logger = createLogger("sqd:collections-retriever");
 const addresses = getAddresses(Network.MATIC);
 const chainId = process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET;
 
@@ -25,37 +27,40 @@ const fileName = `collections_${
   +chainId === ChainId.MATIC_MAINNET ? "mainnet" : "amoy"
 }.json`;
 
-const GATEWAY = `https://v2.archive.subsquid.io/network/polygon-${
+// SQD Network Portal, the same dataset the processors read (see polygon/processor.ts). This used to
+// point at `v2.archive.subsquid.io`, which STARTED REQUIRING AN API KEY on 19 May 2026 — after which
+// every run of this tool died with `ArchiveCredentialsError: CREDENTIALS_INVALID` unless SQUID_API_KEY
+// happened to be set in the shell. That is why the committed snapshot went stale, and staleness here is
+// expensive: the processor can only address-filter collection logs up to the snapshot's height, and
+// falls back to fetching EVERY ERC721 Transfer on the chain beyond it.
+//
+// The Portal needs no key, so this can be run by anyone (and by CI) without a secret.
+const PORTAL_URL = `https://portal.sqd.dev/datasets/polygon-${
   chainId == ChainId.MATIC_MAINNET ? "mainnet" : "amoy-testnet"
 }`;
 
-const processor = new EvmBatchProcessor()
-  .setGateway({ url: GATEWAY, apiKey: process.env.SQUID_API_KEY })
-  .setRpcEndpoint({
-    url: assertNotNull(process.env.RPC_ENDPOINT_POLYGON),
-    rateLimit: 10,
-  })
+const dataSource = new DataSourceBuilder()
+  .setPortal(PORTAL_URL)
+  // Portal fetches ONLY the fields listed here — it does not merge in a default set.
   .setFields({
-    log: {
-      topics: true,
-      data: true,
-    },
+    block: { timestamp: true },
+    log: { address: true, topics: true, data: true },
   })
   .addLog({
-    address: [addresses.CollectionFactory],
-    topic0: [CollectionFactoryABI.events.ProxyCreated.topic],
-    range: {
-      from: fromsV1[chainId],
+    where: {
+      address: [addresses.CollectionFactory],
+      topic0: [CollectionFactoryABI.events.ProxyCreated.topic],
     },
+    range: { from: fromsV1[chainId] },
   })
   .addLog({
-    address: [addresses.CollectionFactoryV3],
-    topic0: [CollectionFactoryV3ABI.events.ProxyCreated.topic],
-    range: {
-      from: fromsV3[chainId],
+    where: {
+      address: [addresses.CollectionFactoryV3],
+      topic0: [CollectionFactoryV3ABI.events.ProxyCreated.topic],
     },
+    range: { from: fromsV3[chainId] },
   })
-  .setFinalityConfirmation(100);
+  .build();
 
 let collections: string[] = [];
 
@@ -94,12 +99,14 @@ let db = new Database({
         ...info,
         addresses: collections,
       };
-      await dest.writeFile(fileName, JSON.stringify(metadata));
+      // Pretty-printed on purpose: this file is COMMITTED, so a single-line array of hundreds of
+      // addresses would make every regeneration an unreviewable one-line diff.
+      await dest.writeFile(fileName, JSON.stringify(metadata, null, 2) + "\n");
     },
   },
 });
 
-processor.run(db, async (ctx) => {
+run(dataSource, db, async (ctx) => {
   ctx.store.setForceFlush(true);
   if (isReady) process.exit();
   if (ctx.isHead) isReady = true;
@@ -113,7 +120,7 @@ processor.run(db, async (ctx) => {
       ) {
         const { _address } = CollectionFactoryABI.events.ProxyCreated.decode(i);
         collections.push(_address.toLowerCase());
-        ctx.log.info(`collections: ${collections.length}`);
+        logger.info(`collections: ${collections.length}`);
       }
     }
   }
