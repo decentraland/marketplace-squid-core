@@ -1,4 +1,4 @@
-import { ChainId, Network } from "@dcl/schemas";
+import { Network } from "@dcl/schemas";
 import { getURNForCollectionV2 } from "../../common/utils/network";
 import { createOrLoadAccount } from "../../common/modules/account";
 import {
@@ -30,15 +30,12 @@ import { Log, Transaction } from "../processor";
 import { handleMintNFT, handleTransferNFT } from "./nft";
 import { isMint } from "../../common/utils";
 import { StoreContractData } from "../state";
+import { POLYGON_CHAIN_ID } from "../../config";
 import type { CollectionData } from "../utils/collectionMulticall";
 
 // Pre-fetched collection data from multicall (the multicall keys results by
 // address, so the per-collection payload is CollectionData without its `address`).
 export type PrefetchedCollectionData = Omit<CollectionData, "address">;
-
-const POLYGON_CHAIN_ID = BigInt(
-  process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET
-);
 
 export const handleCollectionCreation = async (
   ctx: Context,

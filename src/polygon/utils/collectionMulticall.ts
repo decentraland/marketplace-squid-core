@@ -1,9 +1,9 @@
-import { ChainId } from "@dcl/schemas";
 import { Multicall, AggregateTuple } from "../../abi/multicall";
 import {
   Contract as CollectionV2Contract,
   functions as CollectionV2Functions,
 } from "../abi/CollectionV2";
+import { POLYGON_CHAIN_ID } from "../../config";
 import type { Context, Block } from "../processor";
 
 // Number of contract calls issued per collection. Keep in sync with the calls pushed below,
@@ -13,8 +13,6 @@ import type { Context, Block } from "../processor";
 // processor is always POLYGON_CHAIN_ID, so calling it spends one RPC per collection to learn a
 // constant we already have.
 const CALLS_PER_COLLECTION = 8;
-
-const CHAIN_ID = BigInt(process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET);
 
 const MULTICALL_CONTRACT = "0xcA11bde05977b3631167028862bE2a173976CA11";
 // Multicall3 was deployed on Polygon at block 25770160. Everything BELOW it — the first ~28% of
@@ -121,7 +119,7 @@ export async function fetchCollectionDataMulticall(
         isApproved: rawResults[baseIndex + 5].value as boolean,
         isEditable: rawResults[baseIndex + 6].value as boolean,
         baseURI: rawResults[baseIndex + 7].value as string,
-        chainId: CHAIN_ID,
+        chainId: POLYGON_CHAIN_ID,
       });
     }
   } catch (e: any) {
@@ -175,12 +173,13 @@ export async function fetchCollectionDataDirect(
       if (outcome.status === "fulfilled") {
         results.set(outcome.value.address, outcome.value);
       } else {
-        // Message only: RPC errors can embed the endpoint URL (with API key).
+        // Message only, and never the rejection value itself: RPC errors can embed the
+        // endpoint URL (with API key), and a library is free to reject with a bare string.
         console.log(
           `⚠️ Direct read failed for collection ${chunk[j].address.slice(
             0,
             10
-          )}, will use fallback: ${outcome.reason?.message ?? outcome.reason}`
+          )}, will use fallback: ${outcome.reason?.message ?? "unknown error"}`
         );
       }
     });
@@ -231,6 +230,6 @@ async function readCollection(
     isApproved,
     isEditable,
     baseURI,
-    chainId: CHAIN_ID,
+    chainId: POLYGON_CHAIN_ID,
   };
 }
