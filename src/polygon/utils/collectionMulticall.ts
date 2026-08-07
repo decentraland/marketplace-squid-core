@@ -21,8 +21,10 @@ const MULTICALL_CONTRACT = "0xcA11bde05977b3631167028862bE2a173976CA11";
 export const POLYGON_MULTICALL_CREATION_BLOCK = 25770160;
 
 // How many collections the direct path reads concurrently. Each issues CALLS_PER_COLLECTION
-// eth_calls, so this bounds the promise fan-out; the RPC client's own capacity/rateLimit is
-// what actually paces the requests.
+// eth_calls, so 25 puts ~200 in flight against the RPC client's capacity of 100: enough queued
+// to keep the client busy while the first wave drains, without materializing a promise per
+// collection on a batch that creates hundreds. The client's capacity/rateLimit is what actually
+// paces the requests — this only bounds the fan-out.
 const DIRECT_FETCH_CONCURRENCY = 25;
 
 const fmt = (ms: number) =>

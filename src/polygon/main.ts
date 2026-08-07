@@ -643,10 +643,10 @@ run(dataSource, db, async (simpleCtx) => {
 
     metrics.preIndexTime = performance.now() - preIndexStart;
 
-    // ⚡ OPTIMIZATION: Fetch ALL collection data via MULTICALL (9 calls per collection → 1 batch)
-    // This is the biggest optimization: instead of 9 RPC calls per collection,
-    // we fetch name, symbol, owner, creator, isCompleted, isApproved, isEditable, baseURI, chainId
-    // for ALL collections in a single multicall batch!
+    // Read every collection the batch creates up front — name, symbol, owner, creator,
+    // isCompleted, isApproved, isEditable, baseURI, at CALLS_PER_COLLECTION reads each. Above the
+    // Multicall3 deployment block that is a single batched call for all of them; below it, a
+    // concurrent direct read. Either way the handler loop further down is left free of I/O.
     let prefetchedCollectionData = new Map<string, CollectionData>();
 
     if (proxyCreatedEvents.length > 0) {
