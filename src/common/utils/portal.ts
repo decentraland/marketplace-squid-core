@@ -20,13 +20,23 @@ export function portalSource(dataset: string): {
   http: { headers: Record<string, string> };
 } {
   const host = process.env.SQD_PORTAL_URL || DEFAULT_PORTAL_HOST;
+  // Today the key arrives as SQUID_API_KEY: that is the variable already wired to every squid
+  // service (SSM `ops-param-subsquid-api-key`), and that parameter now holds the Portal key.
+  //
+  // TRANSITIONAL. The same variable is what the pre-Portal trades squid still passes to the v2
+  // archive as `setGateway({ apiKey })`, and those are two different SQD products with two
+  // different keys — one parameter cannot serve both. It works today only because a processor at
+  // the head reads from the RPC and only falls back to the archive when it drops far behind. Once
+  // trades is promoted onto its Portal build it stops needing the archive key entirely; give the
+  // Portal its own parameter then and drop the fallback below.
+  const apiKey = process.env.SQD_API_KEY || process.env.SQUID_API_KEY;
   return {
     url: `${host}/datasets/${dataset}`,
     http: {
       headers: {
         "x-api-key": assertNotNull(
-          process.env.SQD_API_KEY,
-          "SQD_API_KEY is not set — the shared Portal endpoint is authenticated"
+          apiKey,
+          "Neither SQD_API_KEY nor SQUID_API_KEY is set — the shared Portal endpoint is authenticated"
         ),
       },
     },
