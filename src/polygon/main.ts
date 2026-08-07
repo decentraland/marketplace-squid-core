@@ -35,6 +35,7 @@ import * as CreditsManagerABI from "./abi/CreditsManager";
 import * as SpokeABI from "../abi/Spoke";
 import {
   fetchCollectionDataMulticall,
+  fetchCollectionDataDirect,
   type CollectionData,
 } from "./utils/collectionMulticall";
 import {
@@ -660,6 +661,19 @@ run(dataSource, db, async (simpleCtx) => {
         lastBlock,
         collectionAddresses
       );
+
+      // Below Polygon block 25_770_160 there is no Multicall3, so the call above returns nothing
+      // and every collection would otherwise be read one at a time INSIDE the handler loop below,
+      // which is sequential. Read whatever the multicall did not cover here instead, concurrently.
+      const missing = proxyCreatedEvents.filter(
+        (e) => !prefetchedCollectionData.has(e.address.toLowerCase())
+      );
+      if (missing.length > 0) {
+        const direct = await fetchCollectionDataDirect(ctx, missing);
+        for (const [address, data] of direct) {
+          prefetchedCollectionData.set(address, data);
+        }
+      }
 
       const multicallDuration = performance.now() - multicallStart;
       metrics.ownerMulticallTime = multicallDuration;
