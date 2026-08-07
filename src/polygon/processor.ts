@@ -1,4 +1,5 @@
 import { assertNotNull } from "@subsquid/util-internal";
+import { portalSource } from "../common/utils/portal";
 import { DataSourceBuilder, FieldSelection } from "@subsquid/evm-stream";
 import * as evmObjects from "@subsquid/evm-objects";
 import { RpcClient } from "@subsquid/rpc-client";
@@ -26,8 +27,9 @@ import { startBlockByNetwork } from "./addresses/startBlocks";
 const addresses = getAddresses(Network.MATIC);
 const chainId = process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET;
 
-// SQD Network Portal dataset (replaces the deprecated v2 archive gateway).
-const PORTAL_URL = `https://portal.sqd.dev/datasets/polygon-${
+// SQD Network Portal dataset (replaces the deprecated v2 archive gateway). See portalSource for
+// why this is the shared endpoint and not the public one.
+const PORTAL_DATASET = `polygon-${
   chainId == ChainId.MATIC_MAINNET ? "mainnet" : "amoy-testnet"
 }`;
 const RPC_ENDPOINT = process.env.RPC_ENDPOINT_POLYGON;
@@ -98,7 +100,7 @@ const collectionV2Topics = [
 ];
 
 export const dataSource = new DataSourceBuilder()
-  .setPortal(PORTAL_URL)
+  .setPortal(portalSource(PORTAL_DATASET))
   .setBlockRange(getBlockRange(Network.MATIC))
   .setFields(fields)
   .addLog({

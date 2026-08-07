@@ -1,5 +1,6 @@
 import { ChainId, Network } from "@dcl/schemas";
 import { assertNotNull } from "@subsquid/util-internal";
+import { portalSource } from "../common/utils/portal";
 import { DataSourceBuilder, FieldSelection } from "@subsquid/evm-stream";
 import * as evmObjects from "@subsquid/evm-objects";
 import { RpcClient } from "@subsquid/rpc-client";
@@ -20,8 +21,9 @@ import * as SpokeABI from "../abi/Spoke";
 const addresses = getAddresses(Network.ETHEREUM);
 const chainId = process.env.ETHEREUM_CHAIN_ID || ChainId.ETHEREUM_MAINNET;
 
-// SQD Network Portal dataset (replaces the deprecated v2 archive gateway).
-const PORTAL_URL = `https://portal.sqd.dev/datasets/ethereum-${
+// SQD Network Portal dataset (replaces the deprecated v2 archive gateway). See portalSource for
+// why this is the shared endpoint and not the public one.
+const PORTAL_DATASET = `ethereum-${
   chainId == ChainId.ETHEREUM_MAINNET ? "mainnet" : "sepolia"
 }`;
 const RPC_ENDPOINT = process.env.RPC_ENDPOINT_ETH;
@@ -89,7 +91,7 @@ const erc721TransferTopics = [
 ];
 
 export const dataSource = new DataSourceBuilder()
-  .setPortal(PORTAL_URL)
+  .setPortal(portalSource(PORTAL_DATASET))
   .setBlockRange({ from: FROM_BLOCK })
   .setFields(fields)
   .addLog({
