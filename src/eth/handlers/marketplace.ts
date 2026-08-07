@@ -189,6 +189,10 @@ export async function handleTraded(
 ): Promise<void> {
   const tradeType = getTradeEventType(event, Network.ETHEREUM);
   const tradeData = getTradeEventData(event, Network.ETHEREUM);
+  // Nothing to index: not an order or a bid (a giveaway has no payment leg).
+  if (!tradeData) {
+    return;
+  }
   const { collectionAddress, price, buyer, seller, tokenId } = tradeData;
 
   if (!tokenId) {
