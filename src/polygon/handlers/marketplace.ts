@@ -248,6 +248,10 @@ export async function handleTraded(
 
   const tradeData = getTradeEventData(event, Network.MATIC);
   const tradeType = getTradeEventType(event, Network.MATIC);
+  // Nothing to index: not an order or a bid (a giveaway has no payment leg).
+  if (!tradeData) {
+    return;
+  }
   const { assetType, collectionAddress, tokenId, buyer, price, seller } =
     tradeData;
   const marketplaceV3Contract = new MarketplaceV3ABI.Contract(

@@ -60,6 +60,20 @@ const tradedEvent = (opts: {
     _trade: { signer: opts.signer, sent: opts.sent, received: opts.received },
   } as unknown as TradedEventArgs);
 
+/**
+ * `getTradeEventData` returns undefined for a trade this squid does not index (see the giveaway tests
+ * at the bottom). Every test above is about a trade that IS indexed, so narrow it once here rather
+ * than asserting non-null in each one.
+ */
+const indexable = (
+  event: TradedEventArgs,
+  network: Parameters<typeof getTradeEventData>[1]
+) => {
+  const data = getTradeEventData(event, network);
+  assert.ok(data, "expected an indexable trade");
+  return data;
+};
+
 describe("getTradeEventData — sale attribution", () => {
   describe("an order (a listing, signed by its seller)", () => {
     it("should attribute the sale to the signer, not to whoever was paid", () => {
@@ -73,7 +87,7 @@ describe("getTradeEventData — sale attribution", () => {
         received: [manaAsset(TREASURY, TradeAssetType.USD_PEGGED_MANA)],
       });
 
-      const data = getTradeEventData(event, Network.MATIC);
+      const data = indexable(event, Network.MATIC);
 
       assert.strictEqual(data.seller, SELLER);
       assert.strictEqual(data.buyer, BUYER);
@@ -91,7 +105,7 @@ describe("getTradeEventData — sale attribution", () => {
         received: [manaAsset(TREASURY, TradeAssetType.USD_PEGGED_MANA)],
       });
 
-      const data = getTradeEventData(event, Network.MATIC);
+      const data = indexable(event, Network.MATIC);
 
       assert.strictEqual(data.seller, SELLER);
       assert.strictEqual(data.buyer, BUYER);
@@ -107,7 +121,7 @@ describe("getTradeEventData — sale attribution", () => {
         received: [manaAsset(SELLER)],
       });
 
-      const data = getTradeEventData(event, Network.MATIC);
+      const data = indexable(event, Network.MATIC);
 
       assert.strictEqual(data.seller, SELLER);
       assert.strictEqual(data.buyer, BUYER);
@@ -121,7 +135,7 @@ describe("getTradeEventData — sale attribution", () => {
         received: [manaAsset(TREASURY, TradeAssetType.USD_PEGGED_MANA)],
       });
 
-      const data = getTradeEventData(event, Network.MATIC);
+      const data = indexable(event, Network.MATIC);
 
       assert.strictEqual(data.collectionAddress, COLLECTION);
       assert.strictEqual(data.tokenId, 42n);
@@ -142,7 +156,7 @@ describe("getTradeEventData — sale attribution", () => {
         received: [asset({ beneficiary: BUYER })],
       });
 
-      const data = getTradeEventData(event, Network.MATIC);
+      const data = indexable(event, Network.MATIC);
 
       assert.strictEqual(data.seller, SELLER);
       assert.strictEqual(data.buyer, BUYER);
@@ -158,10 +172,69 @@ describe("getTradeEventData — sale attribution", () => {
         received: [asset({ beneficiary: BUYER })],
       });
 
-      const data = getTradeEventData(event, Network.MATIC);
+      const data = indexable(event, Network.MATIC);
 
       assert.strictEqual(data.seller, SELLER);
       assert.strictEqual(data.buyer, BUYER);
     });
+  });
+});
+
+/**
+ * A trade with an EMPTY leg.
+ *
+ * A giveaway — the signer hands over an asset and takes no payment — is accepted by the contract and
+ * emits `Traded` with `received: []`. Two such trades landed in Polygon block 91576312 and crash-looped
+ * the polygon processor: it read `received[0].assetType` on `undefined`, which is fatal inside the batch
+ * transaction, so it stopped indexing everything behind that block.
+ */
+describe("getTradeEventData — a trade with no payment leg", () => {
+  it("should not throw when `received` is empty", () => {
+    const event = tradedEvent({
+      signer: SELLER,
+      caller: CONTRACT,
+      sent: [asset({ beneficiary: BUYER })],
+      received: [],
+    });
+
+    assert.doesNotThrow(() => getTradeEventData(event, Network.MATIC));
+  });
+
+  it("should not throw when `sent` is empty", () => {
+    const event = tradedEvent({
+      signer: SELLER,
+      caller: CONTRACT,
+      sent: [],
+      received: [manaAsset(SELLER)],
+    });
+
+    assert.doesNotThrow(() => getTradeEventData(event, Network.MATIC));
+  });
+
+  it("should report a giveaway as not indexable rather than inventing a bid", () => {
+    // The `else` branch used to catch both "it is a bid" and "we could not tell". A giveaway has no
+    // price and no seller to read, so treating it as a bid would write both as fiction.
+    const event = tradedEvent({
+      signer: SELLER,
+      caller: CONTRACT,
+      sent: [asset({ beneficiary: BUYER })],
+      received: [],
+    });
+
+    assert.strictEqual(getTradeEventData(event, Network.MATIC), undefined);
+  });
+
+  it("should still classify a normal order, so the guard costs nothing", () => {
+    const event = tradedEvent({
+      signer: SELLER,
+      caller: CONTRACT,
+      sent: [asset({ beneficiary: BUYER })],
+      received: [manaAsset(TREASURY)],
+    });
+
+    const data = indexable(event, Network.MATIC);
+
+    assert.strictEqual(data.seller, SELLER);
+    assert.strictEqual(data.buyer, BUYER);
   });
 });

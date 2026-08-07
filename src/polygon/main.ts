@@ -1164,6 +1164,10 @@ run(dataSource, db, async (simpleCtx) => {
           case MarketplaceV3ABI.events.Traded.topic: {
             const event = MarketplaceV3ABI.events.Traded.decode(log);
             const tradeData = getTradeEventData(event, Network.MATIC);
+            // Nothing to index: not an order or a bid (a giveaway has no payment leg).
+            if (!tradeData) {
+              break;
+            }
             const { collectionAddress, buyer, seller, assetType, itemId } =
               tradeData;
             let tokenId = tradeData.tokenId;
