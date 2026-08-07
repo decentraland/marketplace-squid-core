@@ -92,6 +92,11 @@ const BULK_INDEX_MODE = process.env.BULK_INDEX_MODE === "true";
 let bulkModeInitialized = false;
 let indicesRecreated = false;
 let indicesNeedRecreation = false;
+// See the same pair in polygon/main.ts: recreateIndices now throws while indices are missing, so
+// the head handler retries — bounded, because an index that can never be built would otherwise
+// re-attempt on every batch forever.
+let indexRecreateAttempts = 0;
+const MAX_INDEX_RECREATE_ATTEMPTS = 5;
 const ETH_INITIAL_BLOCK = getBlockRange(Network.ETHEREUM).from;
 
 const schemaName = process.env.DB_SCHEMA;
@@ -187,13 +192,26 @@ run(dataSource, db, async (simpleCtx) => {
     // CREATE INDEX (SHARE lock) on an independent connection, which would deadlock
     // against ROW EXCLUSIVE locks the batch transaction takes once it starts writing.
     // recreateIndices is a no-op when nothing is missing; on error we retry next batch.
-    if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
+    if (
+      BULK_INDEX_MODE &&
+      !indicesRecreated &&
+      ctx.isHead &&
+      indexRecreateAttempts < MAX_INDEX_RECREATE_ATTEMPTS
+    ) {
+      indexRecreateAttempts++;
       console.log(`[IndexMgr] Reached chain head (eth) - recreating indices`);
       try {
         await recreateIndices(ctx.store, ETH_INDICES);
         indicesRecreated = true;
       } catch (e: any) {
-        console.log(`[IndexMgr] Error recreating indices (eth): ${e.message}`);
+        console.log(
+          `[IndexMgr] Error recreating indices (eth) (attempt ${indexRecreateAttempts}/${MAX_INDEX_RECREATE_ATTEMPTS}): ${e.message}`
+        );
+        if (indexRecreateAttempts >= MAX_INDEX_RECREATE_ATTEMPTS) {
+          console.log(
+            `[IndexMgr] Giving up. The query layer is serving WITHOUT some indices — recreate them by hand.`
+          );
+        }
       }
     }
 

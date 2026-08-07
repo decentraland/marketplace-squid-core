@@ -10,10 +10,14 @@
  * manages only the tables it owns. Tables that both processors write (nft, order,
  * sale, bid, transfer, metadata, account, wearable) are managed by the Polygon
  * processor, which is by far the dominant writer of those rows; the ETH processor
- * only manages its exclusive tables (parcel, estate, ens, data). The query-layer
- * indices are not needed by either processor's write path (which looks entities up
- * by primary key), so dropping the shared ones during Polygon's backfill does not
- * slow ETH's backfill.
+ * only manages its exclusive tables (parcel, estate, ens, data).
+ *
+ * MOST query-layer indices are not needed by either processor's own path, which looks entities up
+ * by primary key — so dropping the shared ones during Polygon's backfill does not slow ETH's.
+ * Two are the exception: getStoredData resolves orders by `nft_id` and items by `collection_id`,
+ * neither of which is a primary key. Those carry `keepDuringBulkLoad` and are never dropped.
+ * Assuming the write path was PK-only cost a 4.6x slowdown on a prod backfill before it was
+ * caught, so verify against the actual store queries before adding an index here.
  *
  * All DDL runs on an independent connection, outside the batch transaction (see
  * withIndexConnection), so each CREATE/DROP INDEX autocommits on its own instead
@@ -38,7 +42,16 @@ import { createSlackComponent, ISlackComponent } from "./slack";
 // Log prefix for easy filtering in Grafana
 const LOG_PREFIX = "[IndexMgr]";
 
-export type ManagedIndex = { name: string; create: string };
+/**
+ * `keepDuringBulkLoad` marks an index the PROCESSOR's own read path needs, not just the query
+ * layer. Bulk mode leaves those in place: dropping them makes the backfill slower, because every
+ * batch then seq-scans the table they serve. See the two flagged below.
+ */
+export type ManagedIndex = {
+  name: string;
+  create: string;
+  keepDuringBulkLoad?: boolean;
+};
 export type IndexGroup = Record<string, ManagedIndex[]>;
 
 // Secondary indices owned by the Polygon processor (plus the shared marketplace
@@ -66,7 +79,10 @@ export const POLYGON_INDICES: IndexGroup = {
   order: [
     { name: "IDX_2485593ed8c9972197aeaf7da6", create: `CREATE INDEX "IDX_2485593ed8c9972197aeaf7da6" ON "order" ("expires_at_normalized")` },
     { name: "IDX_d01158fe15b1ead5c26fd7f4e9", create: `CREATE INDEX "IDX_d01158fe15b1ead5c26fd7f4e9" ON "order" ("item_id")` },
-    { name: "IDX_f5047ff046d513a3598c1a2931", create: `CREATE INDEX "IDX_f5047ff046d513a3598c1a2931" ON "order" ("nft_id")` },
+    // KEPT during bulk load: getStoredData does `findBy(Order, { nft: In([...nftIds]) })` once per
+    // batch. Without this index that is a seq scan of `order` per batch, and it gets worse as the
+    // table grows — measured at 4.6x slower overall on a prod backfill.
+    { name: "IDX_f5047ff046d513a3598c1a2931", create: `CREATE INDEX "IDX_f5047ff046d513a3598c1a2931" ON "order" ("nft_id")`, keepDuringBulkLoad: true },
   ],
   sale: [
     { name: "IDX_8ac00a610840894296c6f32fd2", create: `CREATE INDEX "IDX_8ac00a610840894296c6f32fd2" ON "sale" ("timestamp")` },
@@ -75,7 +91,9 @@ export const POLYGON_INDICES: IndexGroup = {
     { name: "IDX_8524438f82167bcb795bcb8663", create: `CREATE INDEX "IDX_8524438f82167bcb795bcb8663" ON "sale" ("nft_id")` },
   ],
   item: [
-    { name: "IDX_9ddbd0267ddb9c59621775f94e", create: `CREATE INDEX "IDX_9ddbd0267ddb9c59621775f94e" ON "item" ("collection_id", "blockchain_id")` },
+    // KEPT during bulk load: getStoredData looks items up by `collection` (not by PK) once per
+    // batch, for the same reason as order.nft_id above.
+    { name: "IDX_9ddbd0267ddb9c59621775f94e", create: `CREATE INDEX "IDX_9ddbd0267ddb9c59621775f94e" ON "item" ("collection_id", "blockchain_id")`, keepDuringBulkLoad: true },
     { name: "IDX_6d5bb320c601281cd3a213979e", create: `CREATE INDEX "IDX_6d5bb320c601281cd3a213979e" ON "item" ("metadata_id")` },
   ],
   bid: [
@@ -256,7 +274,8 @@ async function getIndicesStatus(
  * independent connection so it autocommits outside the batch transaction.
  */
 export async function dropIndicesForBulkLoad(store: Store, group: IndexGroup): Promise<void> {
-  const indices = flattenIndices(group);
+  // Anything the processor's own read path needs stays — see keepDuringBulkLoad.
+  const indices = flattenIndices(group).filter((idx) => !idx.keepDuringBulkLoad);
   await withIndexConnection(store, async (runner) => {
     const statusBefore = await getIndicesStatus(runner, indices);
 
@@ -367,9 +386,14 @@ export async function recreateIndices(store: Store, group: IndexGroup): Promise<
       );
     }
 
+    // Throw rather than return: per-index failures are caught inside the loop above, so without
+    // this the caller sees a clean return, latches "indices recreated" and never retries — leaving
+    // production permanently missing an index with nothing but a Slack message to say so.
     const statusAfter = await getIndicesStatus(runner, indices);
     if (statusAfter.missingCount > 0) {
-      console.log(`${LOG_PREFIX} ⚠️ Still missing ${statusAfter.missingCount} indices`);
+      throw new Error(
+        `${statusAfter.missingCount} of ${statusAfter.total} indices are still missing after the recreate pass`
+      );
     }
   });
 }
