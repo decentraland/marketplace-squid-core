@@ -24,6 +24,11 @@ on:
         default: "latest"
         type: string
         description: "Docker tag (quay.io)"
+      force:
+        required: false
+        default: false
+        type: boolean
+        description: "FORCE: deploy even if the target slot is LIVE. Only for a schema-less fix onto a broken live slot — see the guard step."
 
 jobs:
   deployment:
@@ -49,18 +54,52 @@ jobs:
           SLOT: ${{ inputs.deployment-server }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          FORCE: ${{ inputs.force }}
         run: |
           # This guard is intentionally fail-closed: any uncertainty (network error,
           # bad auth, malformed response, missing field) blocks the deploy. We avoid
           # `var=$(curl ...)` because `set -e` does NOT propagate command-substitution
           # failures inside variable assignments — that pattern silently lets a failed
           # liveness check fall through to a successful deploy.
+          #
+          # `force` downgrades every refusal below to a warning. It exists for ONE situation: the live
+          # slot is broken — a crash-looping processor indexes nothing — and the fix has to land on the
+          # schema it already has, because a normal deploy provisions a brand-new schema (indexer.sh keys
+          # it by service + commit hash) and reindexes from `fromBlock`, which is days on this squid.
+          #
+          # It is only safe when the deploy carries NO schema change: no new entry under db/migrations and
+          # no schema.graphql edit. Migrations are applied to the schema the API is serving right now, so a
+          # forced deploy that carries one changes production data under live traffic.
 
           set -euo pipefail
 
-          if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
-            echo "::error::CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET secrets are not configured. The squid-management-server is gated by Cloudflare Access."
+          # Spelled out rather than `[ ... ] && FORCED=true`: that form returns non-zero when the test
+          # fails, which under `set -e` is a subtlety this script should not depend on.
+          FORCED=false
+          if [ "${FORCE:-false}" = "true" ]; then
+            FORCED=true
+          fi
+
+          # Refuse, unless forced — in which case say so loudly, in the log and in the run summary, and
+          # skip the remaining checks. `exit 0` ends this STEP successfully; the deploy step still runs.
+          refuse() {
+            if [ "$FORCED" = "true" ]; then
+              echo "::warning::FORCED past the liveness guard: $1"
+              {
+                echo "### ⚠️ Forced deploy"
+                echo
+                echo "The liveness guard was bypassed for slot \`${SLOT}\` of \`${PROJECT}\`."
+                echo
+                echo "Reason the guard fired: $1"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::$1"
             exit 1
+          }
+
+          if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            refuse "CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET secrets are not configured. The squid-management-server is gated by Cloudflare Access."
           fi
 
           tmp=$(mktemp)
@@ -71,15 +110,13 @@ jobs:
             "${MGMT_URL}/${PROJECT}/${SLOT}/is-live") || curl_exit=$?
 
           if [ "$curl_exit" != "0" ]; then
-            echo "::error::curl exited with code $curl_exit when calling ${MGMT_URL}/${PROJECT}/${SLOT}/is-live. Refusing to deploy without a confirmed liveness check."
-            exit 1
+            refuse "curl exited with code $curl_exit when calling ${MGMT_URL}/${PROJECT}/${SLOT}/is-live. Refusing to deploy without a confirmed liveness check."
           fi
 
           if [ "$http_status" != "200" ]; then
-            echo "::error::is-live endpoint returned HTTP $http_status. Refusing to deploy."
             echo "Response body:"
             cat "$tmp" || true
-            exit 1
+            refuse "is-live endpoint returned HTTP $http_status."
           fi
 
           echo "is-live response: $(cat "$tmp")"
@@ -89,8 +126,7 @@ jobs:
           live=$(jq -r '.live | if type == "boolean" then tostring else "invalid" end' "$tmp" 2>/dev/null || echo "parse-error")
 
           if [ "$live" != "true" ] && [ "$live" != "false" ]; then
-            echo "::error::Could not determine .live from response (got: '$live'). Refusing to deploy."
-            exit 1
+            refuse "Could not determine .live from response (got: '$live')."
           fi
 
           active_schema=$(jq -r '.activeSchema // "(null)"' "$tmp")
@@ -103,8 +139,7 @@ jobs:
           echo "Live:          $live"
 
           if [ "$live" = "true" ]; then
-            echo "::error::Refusing to deploy: slot '$SLOT' for project '$PROJECT' is currently LIVE (service $live_service serves schema $active_schema, which is what the API queries). Deploy to the other slot, wait for it to catch up, then promote it before redeploying here."
-            exit 1
+            refuse "slot '$SLOT' for project '$PROJECT' is currently LIVE (service $live_service serves schema $active_schema, which is what the API queries). Deploy to the other slot, wait for it to catch up, then promote it before redeploying here."
           fi
 
       - name: Trigger deployment
