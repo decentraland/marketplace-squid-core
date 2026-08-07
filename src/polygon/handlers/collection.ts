@@ -1,4 +1,4 @@
-import { Network } from "@dcl/schemas";
+import { ChainId, Network } from "@dcl/schemas";
 import { getURNForCollectionV2 } from "../../common/utils/network";
 import { createOrLoadAccount } from "../../common/modules/account";
 import {
@@ -36,6 +36,10 @@ import type { CollectionData } from "../utils/collectionMulticall";
 // address, so the per-collection payload is CollectionData without its `address`).
 export type PrefetchedCollectionData = Omit<CollectionData, "address">;
 
+const POLYGON_CHAIN_ID = BigInt(
+  process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET
+);
+
 export const handleCollectionCreation = async (
   ctx: Context,
   block: Block,
@@ -65,7 +69,9 @@ export const handleCollectionCreation = async (
     baseURI = prefetchedData.baseURI;
     chainId = prefetchedData.chainId;
   } else {
-    // Fallback: 9 RPC calls (only if multicall failed)
+    // Last resort, one collection at a time. The prefetch (multicall above the Multicall3
+    // deployment block, concurrent individual reads below it) covers every collection it can,
+    // so reaching this means that collection's reads failed there.
     const collectionContract = new CollectionV2ABI.Contract(ctx, block, address);
     const rpcStart = performance.now();
     const results = await Promise.all([
@@ -77,13 +83,14 @@ export const handleCollectionCreation = async (
       collectionContract.isApproved(),
       collectionContract.isEditable(),
       collectionContract.baseURI(),
-      collectionContract.getChainId(),
     ]);
     const rpcDuration = performance.now() - rpcStart;
     const fmt = (ms: number) => ms >= 1000 ? `${(ms/1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
     console.log(`⚠️ handleCollectionCreation RPC fallback for ${address.slice(0,10)}: ${fmt(rpcDuration)}`);
-    
-    [name, symbol, owner, creator, isCompleted, isApproved, isEditable, baseURI, chainId] = results;
+
+    [name, symbol, owner, creator, isCompleted, isApproved, isEditable, baseURI] = results;
+    // getChainId() returns block.chainid, always POLYGON_CHAIN_ID here — not worth an RPC call.
+    chainId = POLYGON_CHAIN_ID;
   }
 
   //   console.log("all gotten");

@@ -48,10 +48,15 @@ export type Fields = typeof fields;
 // RPC client for contract-state reads (owner(), the collection multicall, rarities,
 // item/store data). Portal only ingests logs/blocks; eth_call still goes through the
 // RPC endpoint, so Portal (data) and RPC (state) run as two independent channels.
+// 100 req/s, not 10. Below block 25_770_160 Multicall3 does not exist on Polygon, so every
+// collection created before it costs a handful of individual eth_calls (see
+// fetchCollectionDataDirect). At 10 req/s that throttle alone was 50s of a 65s batch during a
+// from-scratch reindex — more than the DB reads and writes put together. Measured against
+// rpc.decentraland.org: 100 concurrent eth_calls complete in ~356ms with no errors.
 export const rpc = new RpcClient({
   url: assertNotNull(RPC_ENDPOINT, "RPC_ENDPOINT_POLYGON is not set"),
-  capacity: 10,
-  rateLimit: 10,
+  capacity: 100,
+  rateLimit: 100,
 });
 
 export const logger: Logger = createLogger("sqd:polygon");
