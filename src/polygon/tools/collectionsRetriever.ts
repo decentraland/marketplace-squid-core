@@ -20,12 +20,29 @@ const fromsV3: Record<string, any> = {
 };
 
 const logger = createLogger("sqd:collections-retriever");
-const addresses = getAddresses(Network.MATIC);
-const chainId = process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET;
 
-const fileName = `collections_${
-  +chainId === ChainId.MATIC_MAINNET ? "mainnet" : "amoy"
-}.json`;
+// Resolve the chain ONCE and write it back to the environment BEFORE anything reads an address.
+//
+// `getAddresses` re-reads POLYGON_CHAIN_ID itself and compares it as a STRING, so anything that is not
+// exactly "137" — including unset — resolves to Amoy. This tool defaults the same variable to mainnet.
+// Left to disagree, a run picks the mainnet dataset, the mainnet start blocks and the mainnet filename,
+// then filters all of it for the AMOY factory addresses: it matches nothing, runs happily to head, and
+// writes a snapshot whose height advanced by millions of blocks while its address list did not grow.
+//
+// Committing that is worse than leaving the snapshot stale. The processor address-filters collection
+// logs up to the recorded height, so every collection created inside the range the file CLAIMS to have
+// scanned would become invisible to it.
+const chainId = process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET.toString();
+process.env.POLYGON_CHAIN_ID = chainId;
+
+const addresses = getAddresses(Network.MATIC);
+
+// One derived flag for every network-dependent choice below. They used to be decided independently —
+// one with `+chainId ===`, another with a loose `==` against a numeric enum — which is how the file
+// name, the dataset and the addresses were able to disagree about which chain this run was for.
+const isMainnet = +chainId === ChainId.MATIC_MAINNET;
+
+const fileName = `collections_${isMainnet ? "mainnet" : "amoy"}.json`;
 
 // SQD Network Portal, the same dataset the processors read (see polygon/processor.ts). This used to
 // point at `v2.archive.subsquid.io`, which STARTED REQUIRING AN API KEY on 19 May 2026 — after which
@@ -36,7 +53,7 @@ const fileName = `collections_${
 //
 // The Portal needs no key, so this can be run by anyone (and by CI) without a secret.
 const PORTAL_URL = `https://portal.sqd.dev/datasets/polygon-${
-  chainId == ChainId.MATIC_MAINNET ? "mainnet" : "amoy-testnet"
+  isMainnet ? "mainnet" : "amoy-testnet"
 }`;
 
 const dataSource = new DataSourceBuilder()
@@ -73,6 +90,17 @@ type Metadata = {
 let isInit = false;
 let isReady = false;
 
+// Where this run resumed from, and how big the address list was there. Both only to sanity-check the
+// result at head — see the guard in the batch handler.
+let startHeight: number | undefined;
+let startCount = 0;
+let lastHeight = 0;
+
+// A run that scans further than this and finds NOTHING is reporting a broken filter, not a quiet chain.
+// Sized well above a weekly run (~300k blocks on Polygon) so an ordinary refresh can never trip it, and
+// well below the multi-million-block backfills where this actually went wrong.
+const SUSPICIOUS_EMPTY_SCAN_BLOCKS = 1_000_000;
+
 let db = new Database({
   tables: {},
   dest: new LocalDest("./assets"),
@@ -86,6 +114,8 @@ let db = new Database({
 
         if (!isInit) {
           collections = addresses;
+          startHeight = height;
+          startCount = addresses.length;
           isInit = true;
         }
 
@@ -108,8 +138,29 @@ let db = new Database({
 
 run(dataSource, db, async (ctx) => {
   ctx.store.setForceFlush(true);
-  if (isReady) process.exit();
+  if (isReady) {
+    const scanned = lastHeight - (startHeight ?? lastHeight);
+    const found = collections.length - startCount;
+    // Reaching head proves the run finished, NOT that it worked. Scanning millions of blocks of a chain
+    // this size without seeing a single ProxyCreated means the subscription matched nothing — a wrong
+    // network's factory addresses, a changed topic, the wrong dataset. Exit non-zero so CI stops before
+    // the commit step, and say plainly that the file on disk is now wrong.
+    if (found === 0 && scanned > SUSPICIOUS_EMPTY_SCAN_BLOCKS) {
+      logger.fatal(
+        `Scanned ${scanned} blocks up to ${lastHeight} and found NO collections. ` +
+          `Filtering on CollectionFactory=${addresses.CollectionFactory} ` +
+          `CollectionFactoryV3=${addresses.CollectionFactoryV3} (POLYGON_CHAIN_ID=${chainId}). ` +
+          `${fileName} now claims that height with an unchanged address list — DISCARD it, do not commit.`
+      );
+      process.exit(1);
+    }
+    logger.info(`done: +${found} collections over ${scanned} blocks, head ${lastHeight}`);
+    process.exit();
+  }
   if (ctx.isHead) isReady = true;
+  if (ctx.blocks.length > 0) {
+    lastHeight = ctx.blocks[ctx.blocks.length - 1].header.height;
+  }
 
   for (let c of ctx.blocks) {
     for (let i of c.logs) {
