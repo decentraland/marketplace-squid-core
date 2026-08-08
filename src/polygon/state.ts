@@ -4,6 +4,7 @@ import { Sale } from "../model";
 import { getAddresses } from "../common/utils/addresses";
 import { Contract as MarketplaceContract } from "./abi/Marketplace";
 import { Contract as MarketplaceV2Contract } from "./abi/MarketplaceV2";
+import { Contract as MarketplaceV3Contract } from "./abi/DecentralandMarketplacePolygon";
 import { Contract as CollectionStoreContract } from "./abi/CollectionStore";
 import { Contract as ERC721BidV2Contract } from "./abi/ERC721BidV2";
 import { Block, Context } from "./processor";
@@ -81,6 +82,71 @@ export let bidV2ContractData: BidV2ContractData = {
 export let storeContractData: StoreContractData = {
   fee: undefined,
   feeOwner: undefined,
+};
+
+export type MarketplaceV3ContractData = {
+  feeCollector: string | undefined;
+  feeRate: bigint | undefined;
+  royaltiesRate: bigint | undefined;
+};
+
+export let marketplaceV3ContractData: MarketplaceV3ContractData = {
+  feeCollector: undefined,
+  feeRate: undefined,
+  royaltiesRate: undefined,
+};
+
+/**
+ * Fee configuration of the V3 marketplace, read from the chain ONCE and kept current from the
+ * contract's own FeeCollectorUpdated / FeeRateUpdated / RoyaltiesRateUpdated events.
+ *
+ * handleTraded used to read all three per Traded event — three sequential eth_calls for values
+ * that change roughly never. Against the RPC client's rate limit that was ~0.3s per trade, and
+ * because the calls were not attributed to any rpcTime bucket it showed up as unexplained
+ * "event loop" time: 548s of a 671s batch on a prod backfill through 2025 blocks.
+ *
+ * Unlike the other getters here there is no start-block guard, and none is needed: this is only
+ * ever called from handleTraded, and a Traded event cannot exist before the contract does.
+ *
+ * Deliberately NOT wrapped in try/catch, unlike its siblings. These values land in the Sale's
+ * money columns (feesCollectorCut, royaltiesCut), so a read failure must fail the batch and be
+ * retried — swallowing it would either skip the sale or record it with empty fees.
+ */
+export const getMarketplaceV3ContractData = async (
+  ctx: Context,
+  block: Block
+): Promise<{ feeCollector: string; feeRate: bigint; royaltiesRate: bigint }> => {
+  let { feeCollector, feeRate, royaltiesRate } = marketplaceV3ContractData;
+  if (
+    feeCollector === undefined ||
+    feeRate === undefined ||
+    royaltiesRate === undefined
+  ) {
+    console.log("INFO: Fetching marketplace v3 contract data for first time");
+    const addresses = getAddresses(Network.MATIC);
+    const c = new MarketplaceV3Contract(ctx, block, addresses.MarketplaceV3);
+    [feeCollector, feeRate, royaltiesRate] = await Promise.all([
+      c.feeCollector(),
+      c.feeRate(),
+      c.royaltiesRate(),
+    ]);
+    marketplaceV3ContractData.feeCollector = feeCollector;
+    marketplaceV3ContractData.feeRate = feeRate;
+    marketplaceV3ContractData.royaltiesRate = royaltiesRate;
+  }
+  return { feeCollector, feeRate, royaltiesRate };
+};
+
+export const setMarketplaceV3FeeCollector = (value: string) => {
+  marketplaceV3ContractData.feeCollector = value;
+};
+
+export const setMarketplaceV3FeeRate = (value: bigint) => {
+  marketplaceV3ContractData.feeRate = value;
+};
+
+export const setMarketplaceV3RoyaltiesRate = (value: bigint) => {
+  marketplaceV3ContractData.royaltiesRate = value;
 };
 
 // CollectionStore contract creation blocks

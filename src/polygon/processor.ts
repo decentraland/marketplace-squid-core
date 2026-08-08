@@ -187,6 +187,19 @@ export const dataSource = new DataSourceBuilder()
     },
     include: { transaction: true },
   })
+  // Fee configuration of the V3 marketplace. handleTraded needs these values on every trade and
+  // used to fetch them over RPC each time; ingesting the changes instead keeps the cached copy
+  // current for free. Only the MarketplaceV3 address: that is the contract handleTraded reads.
+  .addLog({
+    where: {
+      address: [addresses.MarketplaceV3],
+      topic0: [
+        MarketplaceV3.events.FeeCollectorUpdated.topic,
+        MarketplaceV3.events.FeeRateUpdated.topic,
+        MarketplaceV3.events.RoyaltiesRateUpdated.topic,
+      ],
+    },
+  })
   .addLog({
     where: {
       address: addresses.CreditsManager,
