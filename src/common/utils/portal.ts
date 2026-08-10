@@ -20,23 +20,24 @@ export function portalSource(dataset: string): {
   http: { headers: Record<string, string> };
 } {
   const host = process.env.SQD_PORTAL_URL || DEFAULT_PORTAL_HOST;
-  // Today the key arrives as SQUID_API_KEY: that is the variable already wired to every squid
-  // service (SSM `ops-param-subsquid-api-key`), and that parameter now holds the Portal key.
+  // The Portal key, and ONLY the Portal key: SQD_PORTAL_API_KEY (SSM
+  // `ops-param-sqd-portal-api-key`).
   //
-  // TRANSITIONAL. The same variable is what the pre-Portal trades squid still passes to the v2
-  // archive as `setGateway({ apiKey })`, and those are two different SQD products with two
-  // different keys — one parameter cannot serve both. It works today only because a processor at
-  // the head reads from the RPC and only falls back to the archive when it drops far behind. Once
-  // trades is promoted onto its Portal build it stops needing the archive key entirely; give the
-  // Portal its own parameter then and drop the fallback below.
-  const apiKey = process.env.SQD_API_KEY || process.env.SQUID_API_KEY;
+  // SQUID_API_KEY used to be read here as a fallback and must not be again. It is the v2 ARCHIVE
+  // key, a different SQD product; it held a Portal key only while the two shared one parameter,
+  // which is why the fallback looked harmless. It is now demonstrably wrong: the trades squid, whose
+  // services still map that variable alone, sent it to this endpoint on deploy and got `403` on
+  // every batch. This squid cannot fall back to the public Portal either — its Polygon filter is
+  // over the 256 KiB cap — so a missing key has to fail loudly here rather than 403 later, where the
+  // cause is far less obvious.
+  const apiKey = process.env.SQD_PORTAL_API_KEY;
   return {
     url: `${host}/datasets/${dataset}`,
     http: {
       headers: {
         "x-api-key": assertNotNull(
           apiKey,
-          "Neither SQD_API_KEY nor SQUID_API_KEY is set — the shared Portal endpoint is authenticated"
+          "SQD_PORTAL_API_KEY is not set — the shared Portal endpoint is authenticated"
         ),
       },
     },
