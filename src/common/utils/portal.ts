@@ -20,23 +20,28 @@ export function portalSource(dataset: string): {
   http: { headers: Record<string, string> };
 } {
   const host = process.env.SQD_PORTAL_URL || DEFAULT_PORTAL_HOST;
-  // Today the key arrives as SQUID_API_KEY: that is the variable already wired to every squid
-  // service (SSM `ops-param-subsquid-api-key`), and that parameter now holds the Portal key.
+  // SQD_PORTAL_API_KEY is the Portal's OWN key (SSM `ops-param-sqd-portal-api-key`) and is the
+  // variable to use. The two fallbacks are transitional, read in order of decreasing safety:
   //
-  // TRANSITIONAL. The same variable is what the pre-Portal trades squid still passes to the v2
-  // archive as `setGateway({ apiKey })`, and those are two different SQD products with two
-  // different keys — one parameter cannot serve both. It works today only because a processor at
-  // the head reads from the RPC and only falls back to the archive when it drops far behind. Once
-  // trades is promoted onto its Portal build it stops needing the archive key entirely; give the
-  // Portal its own parameter then and drop the fallback below.
-  const apiKey = process.env.SQD_API_KEY || process.env.SQUID_API_KEY;
+  //  - SQD_API_KEY is the name this helper originally shipped with; it is not mapped in definitions.
+  //  - SQUID_API_KEY is the v2 ARCHIVE key. It served the Portal only because that one parameter was
+  //    temporarily loaded with the Portal key. Now that the Portal has its own parameter,
+  //    `ops-param-subsquid-api-key` is free to go back to holding the archive key — and then this
+  //    fallback would send the WRONG key to the Portal. Preferring the dedicated variable is what
+  //    keeps that from silently breaking ingestion on the next deploy.
+  //
+  // Both fallbacks can be dropped once every squid service maps SQD_PORTAL_API_KEY.
+  const apiKey =
+    process.env.SQD_PORTAL_API_KEY ||
+    process.env.SQD_API_KEY ||
+    process.env.SQUID_API_KEY;
   return {
     url: `${host}/datasets/${dataset}`,
     http: {
       headers: {
         "x-api-key": assertNotNull(
           apiKey,
-          "Neither SQD_API_KEY nor SQUID_API_KEY is set — the shared Portal endpoint is authenticated"
+          "SQD_PORTAL_API_KEY is not set — the shared Portal endpoint is authenticated"
         ),
       },
     },
