@@ -20,23 +20,22 @@ export function portalSource(dataset: string): {
   http: { headers: Record<string, string> };
 } {
   const host = process.env.SQD_PORTAL_URL || DEFAULT_PORTAL_HOST;
-  // Today the key arrives as SQUID_API_KEY: that is the variable already wired to every squid
-  // service (SSM `ops-param-subsquid-api-key`), and that parameter now holds the Portal key.
+  // The Portal now has its own parameter (SSM `ops-param-sqd-portal-api-key`), and reading ONLY
+  // that one is the point of this function.
   //
-  // TRANSITIONAL. The same variable is what the pre-Portal trades squid still passes to the v2
-  // archive as `setGateway({ apiKey })`, and those are two different SQD products with two
-  // different keys — one parameter cannot serve both. It works today only because a processor at
-  // the head reads from the RPC and only falls back to the archive when it drops far behind. Once
-  // trades is promoted onto its Portal build it stops needing the archive key entirely; give the
-  // Portal its own parameter then and drop the fallback below.
-  const apiKey = process.env.SQD_API_KEY || process.env.SQUID_API_KEY;
+  // It used to fall back to SQUID_API_KEY, which is the variable wired to every squid for the v2
+  // archive (`setGateway({ apiKey })`, still how the trades squid ingests). Those are two products
+  // with two keys, so once the archive key went back into that parameter the fallback stopped being
+  // a safety net and became a trap: the Portal answers 403 to a wrong key exactly as it does to no
+  // key, so falling back would authenticate with the archive key and fail on every request, at
+  // runtime, without saying why. Missing configuration should stop the boot instead.
   return {
     url: `${host}/datasets/${dataset}`,
     http: {
       headers: {
         "x-api-key": assertNotNull(
-          apiKey,
-          "Neither SQD_API_KEY nor SQUID_API_KEY is set — the shared Portal endpoint is authenticated"
+          process.env.SQD_PORTAL_API_KEY,
+          "SQD_PORTAL_API_KEY is not set — the shared Portal endpoint is authenticated"
         ),
       },
     },
