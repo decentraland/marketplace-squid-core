@@ -1,0 +1,140 @@
+name: Refresh collections snapshot
+
+# assets/collections_*.json is the list of DCL collection addresses the Polygon processor
+# address-filters its log subscription with. That filter only applies UP TO the height the snapshot
+# was generated at; past it the processor cannot know which collections exist yet, so it subscribes
+# to the ERC721 topics with NO address filter and discards what is not ours in the handler.
+#
+# So a stale snapshot is not cosmetic, it is the dominant cost of a backfill. Measured on prod with
+# the snapshot 11M blocks (~8 months) behind: 51,766 of 51,780 ingested Transfer logs discarded per
+# batch — 99.97% — and throughput down from ~8-13k blocks/s to 57 blocks/s.
+#
+# The retriever RESUMES from the committed snapshot's height, so the cost is linear in how far
+# behind it is: ~3 min for a week, ~1h40m for the 11M-block gap that prompted this. Running it
+# weekly is what keeps it cheap.
+#
+# It reads from the PUBLIC SQD portal and needs no secret. That matters: the previous incarnation
+# read from an archive that started requiring an API key in May 2026, after which every run died
+# and nobody noticed — which is how the snapshot rotted for 8 months. Hence also the explicit
+# failure check below rather than trusting a green job.
+
+on:
+  schedule:
+    # Mondays 04:00 UTC. Weekly keeps each run to a few minutes.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      network:
+        description: Network snapshot to refresh
+        type: choice
+        options: [mainnet, amoy]
+        default: mainnet
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # The scheduled run is incremental and takes minutes. This ceiling only exists so a run that
+    # somehow starts from scratch fails loudly instead of burning a runner for six hours.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Regenerate the snapshot
+        id: regen
+        env:
+          # Mainnet unless a manual run says otherwise. 137 = Polygon, 80002 = Amoy.
+          POLYGON_CHAIN_ID: ${{ (github.event.inputs.network == 'amoy' && '80002') || '137' }}
+        run: |
+          set -euo pipefail
+          file="assets/collections_$( [ "$POLYGON_CHAIN_ID" = "137" ] && echo mainnet || echo amoy ).json"
+          before_height=$(jq -r '.height' "$file")
+          before_count=$(jq -r '.addresses | length' "$file")
+
+          node lib/polygon/tools/collectionsRetriever.js
+
+          after_height=$(jq -r '.height' "$file")
+          after_count=$(jq -r '.addresses | length' "$file")
+
+          echo "file=$file"                  >> "$GITHUB_OUTPUT"
+          echo "before_height=$before_height" >> "$GITHUB_OUTPUT"
+          echo "after_height=$after_height"   >> "$GITHUB_OUTPUT"
+          echo "before_count=$before_count"   >> "$GITHUB_OUTPUT"
+          echo "after_count=$after_count"     >> "$GITHUB_OUTPUT"
+
+          # The retriever exits via process.exit() on reaching head, so a zero exit code alone does
+          # not prove it wrote anything. Two things must hold, and both are real failure modes:
+          #   - the height moved forward (it ran, rather than dying early like the API-key era did)
+          #   - the address list did not shrink (it seeds from the committed file; an empty seed
+          #     would silently replace thousands of addresses with only the newly-found ones)
+          if [ "$after_height" -le "$before_height" ]; then
+            echo "::error::Snapshot height did not advance ($before_height -> $after_height). The retriever did not run to head."
+            exit 1
+          fi
+          if [ "$after_count" -lt "$before_count" ]; then
+            echo "::error::Address count SHRANK ($before_count -> $after_count). Refusing to commit a snapshot that loses collections."
+            exit 1
+          fi
+
+      - name: Open a PR if the snapshot moved
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FILE: ${{ steps.regen.outputs.file }}
+          BEFORE_HEIGHT: ${{ steps.regen.outputs.before_height }}
+          AFTER_HEIGHT: ${{ steps.regen.outputs.after_height }}
+          BEFORE_COUNT: ${{ steps.regen.outputs.before_count }}
+          AFTER_COUNT: ${{ steps.regen.outputs.after_count }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- "$FILE"; then
+            echo "Snapshot unchanged. Nothing to do."
+            exit 0
+          fi
+
+          branch="chore/refresh-collections-snapshot-${AFTER_HEIGHT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          # Explicit path, never `git add -A`: this repo is public and the working tree also holds
+          # build output.
+          git add "$FILE"
+          git commit -m "chore: refresh the collections snapshot to block ${AFTER_HEIGHT}"
+          git push -u origin "$branch"
+
+          # Built at column 0: markdown treats 4+ leading spaces as a code block, which would eat
+          # the table if the body were indented inline with the run block.
+          body=$(cat <<BODY
+          Automated weekly refresh of \`${FILE}\`.
+
+          | | before | after |
+          |---|---|---|
+          | height | ${BEFORE_HEIGHT} | ${AFTER_HEIGHT} |
+          | addresses | ${BEFORE_COUNT} | ${AFTER_COUNT} |
+
+          The processor can only address-filter collection logs up to this height. Past it it subscribes to the ERC721 topics unfiltered and discards non-DCL logs in the handler, so every block between the snapshot and head is scanned the expensive way. Merging this shortens that window back to ~zero.
+
+          Generated by \`.github/workflows/refresh-collections-snapshot.yml\`. The job fails rather than commits if the height did not advance or the address count shrank.
+          BODY
+          )
+          # Strip the YAML block indentation the heredoc preserved.
+          body=$(printf '%s\n' "$body" | sed 's/^          //')
+
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore: refresh the collections snapshot to block ${AFTER_HEIGHT}" \
+            --body "$body" \
+            --reviewer decentraland-bot
