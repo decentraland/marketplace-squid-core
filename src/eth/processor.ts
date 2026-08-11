@@ -42,10 +42,13 @@ export type Fields = typeof fields;
 // RPC client for contract-state reads (owner(), tokenURI multicall, cuts, ...).
 // Portal only ingests logs/blocks; eth_call still goes through the RPC endpoint,
 // so Portal (data) and RPC (state) run as two independent channels.
+// Raised alongside Polygon's, for the same reason: 10 req/s throttles a from-scratch reindex
+// far below what the endpoint serves. Ethereum has Multicall3 from block 14_353_601, so it has
+// less per-collection RPC to begin with, but tokenURI and owner reads hit the same ceiling.
 export const rpc = new RpcClient({
   url: assertNotNull(RPC_ENDPOINT, "RPC_ENDPOINT_ETH is not set"),
-  capacity: 10,
-  rateLimit: 10,
+  capacity: 100,
+  rateLimit: 100,
 });
 
 export const logger: Logger = createLogger("sqd:eth");

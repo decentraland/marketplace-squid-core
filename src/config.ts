@@ -15,6 +15,12 @@ const BLOCK_RANGES: Record<string, { from: number }> = {
   },
 };
 
+// The chain the Polygon processor indexes. A bigint because that is what Collection.chainId
+// stores, and the single copy because reading it in each module invites the two to drift.
+export const POLYGON_CHAIN_ID = BigInt(
+  process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET
+);
+
 export const getBlockRange = (network: Network) => {
   const chainId =
     network === Network.ETHEREUM

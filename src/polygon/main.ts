@@ -35,6 +35,7 @@ import * as CreditsManagerABI from "./abi/CreditsManager";
 import * as SpokeABI from "../abi/Spoke";
 import {
   fetchCollectionDataMulticall,
+  fetchCollectionDataDirect,
   type CollectionData,
 } from "./utils/collectionMulticall";
 import {
@@ -642,10 +643,10 @@ run(dataSource, db, async (simpleCtx) => {
 
     metrics.preIndexTime = performance.now() - preIndexStart;
 
-    // ⚡ OPTIMIZATION: Fetch ALL collection data via MULTICALL (9 calls per collection → 1 batch)
-    // This is the biggest optimization: instead of 9 RPC calls per collection,
-    // we fetch name, symbol, owner, creator, isCompleted, isApproved, isEditable, baseURI, chainId
-    // for ALL collections in a single multicall batch!
+    // Read every collection the batch creates up front — name, symbol, owner, creator,
+    // isCompleted, isApproved, isEditable, baseURI, at CALLS_PER_COLLECTION reads each. Above the
+    // Multicall3 deployment block that is a single batched call for all of them; below it, a
+    // concurrent direct read. Either way the handler loop further down is left free of I/O.
     let prefetchedCollectionData = new Map<string, CollectionData>();
 
     if (proxyCreatedEvents.length > 0) {
@@ -660,6 +661,19 @@ run(dataSource, db, async (simpleCtx) => {
         lastBlock,
         collectionAddresses
       );
+
+      // Below Polygon block 25_770_160 there is no Multicall3, so the call above returns nothing
+      // and every collection would otherwise be read one at a time INSIDE the handler loop below,
+      // which is sequential. Read whatever the multicall did not cover here instead, concurrently.
+      const missing = proxyCreatedEvents.filter(
+        (e) => !prefetchedCollectionData.has(e.address.toLowerCase())
+      );
+      if (missing.length > 0) {
+        const direct = await fetchCollectionDataDirect(ctx, missing);
+        for (const [address, data] of direct) {
+          prefetchedCollectionData.set(address, data);
+        }
+      }
 
       const multicallDuration = performance.now() - multicallStart;
       metrics.ownerMulticallTime = multicallDuration;
