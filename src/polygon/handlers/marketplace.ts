@@ -26,7 +26,11 @@ import { trackSale } from "../modules/analytics";
 import { PolygonInMemoryState, PolygonStoredData } from "../types";
 import { buildCountFromOrder } from "../../common/modules/count";
 import { getAddresses } from "../../common/utils/addresses";
-import { MarketplaceContractData, MarketplaceV2ContractData } from "../state";
+import {
+  MarketplaceContractData,
+  MarketplaceV2ContractData,
+  getMarketplaceV3ContractData,
+} from "../state";
 import { Context } from "../processor";
 import { TradedEventArgs } from "../abi/DecentralandMarketplacePolygon";
 import { handleIssue } from "./collection";
@@ -254,14 +258,11 @@ export async function handleTraded(
   }
   const { assetType, collectionAddress, tokenId, buyer, price, seller } =
     tradeData;
-  const marketplaceV3Contract = new MarketplaceV3ABI.Contract(
-    ctx,
-    block.header,
-    addresses.MarketplaceV3
-  );
-  const feesCollector = await marketplaceV3Contract.feeCollector();
-  const feeRate = await marketplaceV3Contract.feeRate();
-  const royaltiesRate = await marketplaceV3Contract.royaltiesRate();
+  // Read once and kept current from the contract's own *Updated events — see
+  // getMarketplaceV3ContractData. This used to be three sequential eth_calls PER Traded event.
+  const { feeCollector, feeRate, royaltiesRate } =
+    await getMarketplaceV3ContractData(ctx, block.header);
+  const feesCollector = feeCollector;
 
   // NFT
   if (Number(assetType) === TradeAssetType.ERC721) {

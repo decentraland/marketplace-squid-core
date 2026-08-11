@@ -76,6 +76,9 @@ import {
   getStoreContractData,
   setBidOwnerCutPerMillion,
   setMarketplaceOwnerCutPerMillion,
+  setMarketplaceV3FeeCollector,
+  setMarketplaceV3FeeRate,
+  setMarketplaceV3RoyaltiesRate,
   setStoreFee,
   setStoreFeeOwner,
 } from "./state";
@@ -990,6 +993,32 @@ run(dataSource, db, async (simpleCtx) => {
               marketplaceV2ContractData: cachedMarketplaceV2Data,
               bidV2ContractData: cachedBidV2Data,
             });
+            break;
+          }
+          // Keep the cached V3 fee configuration current. Same shape as the V1/V2 cases below,
+          // and it inherits their one caveat: these are applied while events are accumulated,
+          // whereas Traded is handled later in the batch. So a fee change and trades in the SAME
+          // batch are applied out of order — trades before the change would see the new value.
+          // At head a batch is seconds wide so this cannot happen; during a backfill a batch can
+          // span ~1M blocks, and it would only matter around the handful of blocks where fees
+          // actually changed. Resolving per-trade needs the change recorded with its block and
+          // applied as-of, which is a bigger change than this one.
+          case MarketplaceV3ABI.events.FeeCollectorUpdated.topic: {
+            setMarketplaceV3FeeCollector(
+              MarketplaceV3ABI.events.FeeCollectorUpdated.decode(log)._feeCollector
+            );
+            break;
+          }
+          case MarketplaceV3ABI.events.FeeRateUpdated.topic: {
+            setMarketplaceV3FeeRate(
+              MarketplaceV3ABI.events.FeeRateUpdated.decode(log)._feeRate
+            );
+            break;
+          }
+          case MarketplaceV3ABI.events.RoyaltiesRateUpdated.topic: {
+            setMarketplaceV3RoyaltiesRate(
+              MarketplaceV3ABI.events.RoyaltiesRateUpdated.decode(log)._royaltiesRate
+            );
             break;
           }
           case MarketplaceV2ABI.events.ChangedFeesCollectorCutPerMillion.topic:
