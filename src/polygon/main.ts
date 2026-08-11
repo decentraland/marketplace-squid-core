@@ -181,6 +181,11 @@ const BULK_INDEX_MODE = process.env.BULK_INDEX_MODE === "true";
 let bulkModeInitialized = false;
 let indicesRecreated = false;
 let indicesNeedRecreation = false; // Will be set on startup check
+// recreateIndices throws while anything is still missing, so the head handler retries it. Bounded
+// because at head a batch runs every few seconds: an index that can never be built (a UNIQUE one
+// with duplicate rows, say) would otherwise re-attempt forever.
+let indexRecreateAttempts = 0;
+const MAX_INDEX_RECREATE_ATTEMPTS = 5;
 
 // Get the chainId and calculate the lowest initial block for this network
 const chainId = +(process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET);
@@ -442,13 +447,26 @@ run(dataSource, db, async (simpleCtx) => {
     // returns, and the handler is awaiting the CREATE INDEX. Running it here, before
     // any table access, keeps the connections contention-free. recreateIndices is a
     // no-op when nothing is missing; on error we retry next batch.
-    if (BULK_INDEX_MODE && !indicesRecreated && ctx.isHead) {
+    if (
+      BULK_INDEX_MODE &&
+      !indicesRecreated &&
+      ctx.isHead &&
+      indexRecreateAttempts < MAX_INDEX_RECREATE_ATTEMPTS
+    ) {
+      indexRecreateAttempts++;
       console.log(`[IndexMgr] Reached chain head - recreating indices`);
       try {
         await recreateIndices(ctx.store, POLYGON_INDICES);
         indicesRecreated = true;
       } catch (e: any) {
-        console.log(`[IndexMgr] Error recreating indices: ${e.message}`);
+        console.log(
+          `[IndexMgr] Error recreating indices (attempt ${indexRecreateAttempts}/${MAX_INDEX_RECREATE_ATTEMPTS}): ${e.message}`
+        );
+        if (indexRecreateAttempts >= MAX_INDEX_RECREATE_ATTEMPTS) {
+          console.log(
+            `[IndexMgr] Giving up. The query layer is serving WITHOUT some indices — recreate them by hand.`
+          );
+        }
       }
     }
 
