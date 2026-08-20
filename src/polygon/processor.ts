@@ -17,6 +17,7 @@ import * as CollectionV2ABI from "./abi/CollectionV2";
 import * as RaritiesABI from "./abi/Rarity";
 import * as CollectionManagerABI from "./abi/CollectionManager";
 import * as MarketplaceV3 from "./abi/DecentralandMarketplacePolygon";
+import * as MarketplaceV3_V3 from "./abi/DecentralandMarketplacePolygonV3";
 import * as CreditsManagerABI from "./abi/CreditsManager";
 import * as SpokeABI from "../abi/Spoke";
 import { getBlockRange } from "../config";
@@ -189,6 +190,15 @@ export const dataSource = new DataSourceBuilder()
     where: {
       address: [addresses.MarketplaceV3_V2],
       topic0: [MarketplaceV3.events.Traded.topic],
+    },
+    include: { transaction: true },
+  })
+  // V3 declares its own ABI module: its Traded event carries an extra indexed
+  // _tradeDigest, so the topic differs from V1/V2 and must come from that module.
+  .addLog({
+    where: {
+      address: [addresses.MarketplaceV3_V3],
+      topic0: [MarketplaceV3_V3.events.Traded.topic],
     },
     include: { transaction: true },
   })

@@ -142,6 +142,11 @@ export function handleSetGlobalMinter(
   const storeAddress = addresses.CollectionStore;
   const marketplaceV3Address = addresses.MarketplaceV3;
   const marketplaceV3_V2Address = addresses.MarketplaceV3_V2;
+  const marketplaceV3_V3Address = addresses.MarketplaceV3_V3;
+  const isMarketplaceV3Minter = (address: string) =>
+    address === marketplaceV3Address ||
+    address === marketplaceV3_V2Address ||
+    address === marketplaceV3_V3Address;
   const minterAddress = event._minter; //@TODO check this
   //   let minterAddress = event._minter.toHexString(); //@TODO check this
 
@@ -163,14 +168,12 @@ export function handleSetGlobalMinter(
     // set flag on collection
     if (
       minterAddress === storeAddress ||
-      minterAddress === marketplaceV3Address ||
-      minterAddress === marketplaceV3_V2Address
+      isMarketplaceV3Minter(minterAddress)
     ) {
       if (minterAddress === storeAddress) {
         collection.searchIsStoreMinter = true;
       } else if (
-        minterAddress === marketplaceV3Address ||
-        minterAddress === marketplaceV3_V2Address
+        isMarketplaceV3Minter(minterAddress)
       ) {
         collection.searchIsMarketplaceV3Minter = true;
       }
@@ -189,8 +192,7 @@ export function handleSetGlobalMinter(
           if (minterAddress === storeAddress) {
             item.searchIsStoreMinter = true;
           } else if (
-            minterAddress === marketplaceV3Address ||
-            minterAddress === marketplaceV3_V2Address
+            isMarketplaceV3Minter(minterAddress)
           ) {
             item.searchIsMarketplaceV3Minter = true;
           }
@@ -215,14 +217,12 @@ export function handleSetGlobalMinter(
     // unset flag on collection
     if (
       minterAddress === storeAddress ||
-      minterAddress === marketplaceV3Address ||
-      minterAddress === marketplaceV3_V2Address
+      isMarketplaceV3Minter(minterAddress)
     ) {
       if (minterAddress === storeAddress) {
         collection.searchIsStoreMinter = false;
       } else if (
-        minterAddress === marketplaceV3Address ||
-        minterAddress === marketplaceV3_V2Address
+        isMarketplaceV3Minter(minterAddress)
       ) {
         collection.searchIsMarketplaceV3Minter = false;
       }
@@ -240,8 +240,7 @@ export function handleSetGlobalMinter(
             if (storeAddress == itemMinters[i]) {
               isStoreItemMinter = true;
             } else if (
-              marketplaceV3Address == itemMinters[i] ||
-              marketplaceV3_V2Address == itemMinters[i]
+              isMarketplaceV3Minter(itemMinters[i])
             ) {
               isMarketplaceV3ItemMinter = true;
             }
@@ -303,6 +302,11 @@ export function handleSetItemMinter(
   const storeAddress = addresses.CollectionStore;
   const marketplaceV3Address = addresses.MarketplaceV3;
   const marketplaceV3_V2Address = addresses.MarketplaceV3_V2;
+  const marketplaceV3_V3Address = addresses.MarketplaceV3_V3;
+  const isMarketplaceV3Minter = (address: string) =>
+    address === marketplaceV3Address ||
+    address === marketplaceV3_V2Address ||
+    address === marketplaceV3_V3Address;
   const minterAddress = event._minter;
   const itemId = event._itemId.toString();
   const id = getItemId(collectionAddress, itemId);
@@ -326,8 +330,7 @@ export function handleSetItemMinter(
         item.firstListedAt = BigInt(block.timestamp / 1000);
       }
     } else if (
-      minterAddress === marketplaceV3Address ||
-      minterAddress === marketplaceV3_V2Address
+      isMarketplaceV3Minter(minterAddress)
     ) {
       item.searchIsMarketplaceV3Minter = true;
 
@@ -353,8 +356,7 @@ export function handleSetItemMinter(
     } else if (
       collection != null &&
       !collection.searchIsMarketplaceV3Minter &&
-      (minterAddress == marketplaceV3Address ||
-        minterAddress == marketplaceV3_V2Address)
+      isMarketplaceV3Minter(minterAddress)
     ) {
       item.searchIsMarketplaceV3Minter = false;
     }

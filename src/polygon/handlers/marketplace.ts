@@ -13,6 +13,7 @@ import {
 } from "../../common/utils";
 import * as CollectionV2ABI from "../abi/CollectionV2";
 import * as MarketplaceV3ABI from "../abi/DecentralandMarketplacePolygon";
+import * as MarketplaceV3_V3ABI from "../abi/DecentralandMarketplacePolygonV3";
 import {
   Category,
   Count,
@@ -353,16 +354,20 @@ export async function handleTraded(
     const logFromTraded = block.logs.find(
       (log) =>
         log.transactionIndex === transaction.transactionIndex &&
-        log.topics[0] === MarketplaceV3ABI.events.Traded.topic
+        (log.topics[0] === MarketplaceV3ABI.events.Traded.topic ||
+          log.topics[0] === MarketplaceV3_V3ABI.events.Traded.topic)
     );
 
     if (!logFromTraded || !logFromTraded.address) {
       console.log("ERROR: logFromTraded not found");
     } else if (
       logFromTraded.address !== addresses.MarketplaceV3 &&
-      logFromTraded.address !== addresses.MarketplaceV3_V2
+      logFromTraded.address !== addresses.MarketplaceV3_V2 &&
+      logFromTraded.address !== addresses.MarketplaceV3_V3
     ) {
-      console.log("ERROR: logFromTraded is not the marketplace v3 or v3 v2");
+      console.log(
+        "ERROR: logFromTraded is not the marketplace v3, v3 v2 or v3 v3"
+      );
     }
 
     // simulates an issue event to re-use all the logic inside the `handleIssue` function

@@ -28,6 +28,7 @@ import * as MarketplaceV2ABI from "./abi/MarketplaceV2";
 import * as CommitteeABI from "./abi/Committee";
 import * as RaritiesABI from "./abi/Rarity";
 import * as MarketplaceV3ABI from "./abi/DecentralandMarketplacePolygon";
+import * as MarketplaceV3_V3ABI from "./abi/DecentralandMarketplacePolygonV3";
 import * as ERC721BidABI from "./abi/ERC721Bid";
 import * as CollectionStoreABI from "./abi/CollectionStore";
 import * as CollectionManagerABI from "./abi/CollectionManager";
@@ -160,6 +161,7 @@ const topicToName: Record<string, string> = {
   [CollectionV2ABI.events.Issue.topic]: "Issue",
   [CollectionV2ABI.events.AddItem.topic]: "AddItem",
   [MarketplaceV3ABI.events.Traded.topic]: "Traded",
+  [MarketplaceV3_V3ABI.events.Traded.topic]: "Traded",
 };
 const preloadedCollections = loadCollections().addresses;
 // Set form for O(1) membership checks in the per-log hot path (~84k logs/batch).
@@ -503,6 +505,7 @@ run(dataSource, db, async (simpleCtx) => {
           log.address === addresses.CollectionManager ||
           log.address === addresses.MarketplaceV3 ||
           log.address === addresses.MarketplaceV3_V2 ||
+          log.address === addresses.MarketplaceV3_V3 ||
           preloadedCollectionsSet.has(log.address) ||
           collectionIdsNotIncludedInPreloaded.has(log.address)
       )
@@ -1222,8 +1225,13 @@ run(dataSource, db, async (simpleCtx) => {
             raritiesSnapshotDirty = true; // Mark snapshot as needing refresh
             break;
           }
-          case MarketplaceV3ABI.events.Traded.topic: {
-            const event = MarketplaceV3ABI.events.Traded.decode(log);
+          case MarketplaceV3ABI.events.Traded.topic:
+          case MarketplaceV3_V3ABI.events.Traded.topic: {
+            // V3 carries an extra indexed _tradeDigest, so it decodes with its own module.
+            const event =
+              topic === MarketplaceV3_V3ABI.events.Traded.topic
+                ? MarketplaceV3_V3ABI.events.Traded.decode(log)
+                : MarketplaceV3ABI.events.Traded.decode(log);
             const tradeData = getTradeEventData(event, Network.MATIC);
             // Nothing to index: not an order or a bid (a giveaway has no payment leg).
             if (!tradeData) {
@@ -1468,7 +1476,8 @@ run(dataSource, db, async (simpleCtx) => {
             storedData
           );
           break;
-        case MarketplaceV3ABI.events.Traded.topic: {
+        case MarketplaceV3ABI.events.Traded.topic:
+        case MarketplaceV3_V3ABI.events.Traded.topic: {
           if (!storeContractData || !transaction) {
             console.log("ERROR: storeContractData not found");
             break;
@@ -1492,7 +1501,9 @@ run(dataSource, db, async (simpleCtx) => {
             (event as CollectionV2ABI.IssueEventArgs)._caller ===
               addresses.MarketplaceV3 ||
             (event as CollectionV2ABI.IssueEventArgs)._caller ===
-              addresses.MarketplaceV3_V2
+              addresses.MarketplaceV3_V2 ||
+            (event as CollectionV2ABI.IssueEventArgs)._caller ===
+              addresses.MarketplaceV3_V3
           ) {
             break;
           }
