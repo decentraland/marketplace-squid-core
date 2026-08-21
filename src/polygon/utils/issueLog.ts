@@ -8,7 +8,7 @@ export type IssueLogLike = {
 };
 
 /**
- * Selects the Issue log that corresponds to a given MarketplaceV3 `Traded`
+ * Selects the Issue log that corresponds to a given OffChainMarketplace `Traded`
  * event when minting an item as a primary sale.
  *
  * A single transaction can mint the same `itemId` more than once (e.g. buying

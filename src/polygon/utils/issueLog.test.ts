@@ -34,7 +34,7 @@ describe("selectIssueLogForTrade", () => {
   });
 
   it("when a tx mints the same item twice it returns a distinct Issue log per call", () => {
-    // Mirrors tx 0xa49ba5...: item 5 issued twice, item 15 once, all via MarketplaceV3.
+    // Mirrors tx 0xa49ba5...: item 5 issued twice, item 15 once, all via OffChainMarketplace.
     const logs: IssueLogLike[] = [
       issueLog(3, 5), // item 5, issued #1
       issueLog(10, 5), // item 5, issued #2

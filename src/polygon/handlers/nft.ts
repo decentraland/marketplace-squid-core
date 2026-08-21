@@ -110,10 +110,12 @@ export async function handleMintNFT(
   // store mint data
   const minterAddress = event._caller;
   const addresses = getAddresses(Network.MATIC);
+  const isOffChainMarketplaceMinter =
+    minterAddress === addresses.OffChainMarketplace ||
+    minterAddress === addresses.OffChainMarketplaceV2 ||
+    minterAddress === addresses.OffChainMarketplaceV3;
   const isStoreMinter =
-    minterAddress === addresses.CollectionStore ||
-    minterAddress === addresses.MarketplaceV3 ||
-    minterAddress === addresses.MarketplaceV3_V2;
+    minterAddress === addresses.CollectionStore || isOffChainMarketplaceMinter;
 
   const mint = new Mint({ id: nftId, network: NetworkModel.POLYGON });
   mint.nft = nft;
@@ -141,17 +143,11 @@ export async function handleMintNFT(
     item.beneficiary !== ZERO_ADDRESS ? item.beneficiary : item.creator;
 
   const price =
-    (minterAddress === addresses.MarketplaceV3 ||
-      minterAddress === addresses.MarketplaceV3_V2) &&
-      tradedEvent
+    isOffChainMarketplaceMinter && tradedEvent
       ? tradedEvent._trade.received[0].value
       : item.price;
 
-  if (
-    (minterAddress === addresses.MarketplaceV3 ||
-      minterAddress === addresses.MarketplaceV3_V2) &&
-    tradedEvent
-  ) {
+  if (isOffChainMarketplaceMinter && tradedEvent) {
     beneficiary = tradedEvent._trade.received[0].beneficiary;
   }
 

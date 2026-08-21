@@ -13,7 +13,7 @@ import {
   Rarity,
 } from "../../model";
 import * as CollectionV2ABI from "../abi/CollectionV2";
-import * as MarketplaceV3ABI from "../abi/DecentralandMarketplacePolygon";
+import * as OffChainMarketplaceABI from "../abi/DecentralandMarketplacePolygon";
 import * as RaritiesWithOracleABI from "../abi/RaritiesWithOracle";
 import { Block, Context } from "../processor";
 import { PolygonInMemoryState, PolygonStoredData } from "../types";
@@ -140,8 +140,13 @@ export function handleSetGlobalMinter(
   const { collections, items } = storedData;
   const addresses = getAddresses(Network.MATIC);
   const storeAddress = addresses.CollectionStore;
-  const marketplaceV3Address = addresses.MarketplaceV3;
-  const marketplaceV3_V2Address = addresses.MarketplaceV3_V2;
+  const offChainMarketplaceAddress = addresses.OffChainMarketplace;
+  const offChainMarketplaceV2Address = addresses.OffChainMarketplaceV2;
+  const offChainMarketplaceV3Address = addresses.OffChainMarketplaceV3;
+  const isOffChainMarketplaceMinter = (address: string) =>
+    address === offChainMarketplaceAddress ||
+    address === offChainMarketplaceV2Address ||
+    address === offChainMarketplaceV3Address;
   const minterAddress = event._minter; //@TODO check this
   //   let minterAddress = event._minter.toHexString(); //@TODO check this
 
@@ -163,14 +168,12 @@ export function handleSetGlobalMinter(
     // set flag on collection
     if (
       minterAddress === storeAddress ||
-      minterAddress === marketplaceV3Address ||
-      minterAddress === marketplaceV3_V2Address
+      isOffChainMarketplaceMinter(minterAddress)
     ) {
       if (minterAddress === storeAddress) {
         collection.searchIsStoreMinter = true;
       } else if (
-        minterAddress === marketplaceV3Address ||
-        minterAddress === marketplaceV3_V2Address
+        isOffChainMarketplaceMinter(minterAddress)
       ) {
         collection.searchIsMarketplaceV3Minter = true;
       }
@@ -189,8 +192,7 @@ export function handleSetGlobalMinter(
           if (minterAddress === storeAddress) {
             item.searchIsStoreMinter = true;
           } else if (
-            minterAddress === marketplaceV3Address ||
-            minterAddress === marketplaceV3_V2Address
+            isOffChainMarketplaceMinter(minterAddress)
           ) {
             item.searchIsMarketplaceV3Minter = true;
           }
@@ -215,14 +217,12 @@ export function handleSetGlobalMinter(
     // unset flag on collection
     if (
       minterAddress === storeAddress ||
-      minterAddress === marketplaceV3Address ||
-      minterAddress === marketplaceV3_V2Address
+      isOffChainMarketplaceMinter(minterAddress)
     ) {
       if (minterAddress === storeAddress) {
         collection.searchIsStoreMinter = false;
       } else if (
-        minterAddress === marketplaceV3Address ||
-        minterAddress === marketplaceV3_V2Address
+        isOffChainMarketplaceMinter(minterAddress)
       ) {
         collection.searchIsMarketplaceV3Minter = false;
       }
@@ -234,21 +234,20 @@ export function handleSetGlobalMinter(
         if (item) {
           // check if store is item minter
           let isStoreItemMinter = false;
-          let isMarketplaceV3ItemMinter = false;
+          let isOffChainMarketplaceItemMinter = false;
           const itemMinters = item.minters;
           for (let j = 0; j < item.minters.length; j++) {
             if (storeAddress == itemMinters[i]) {
               isStoreItemMinter = true;
             } else if (
-              marketplaceV3Address == itemMinters[i] ||
-              marketplaceV3_V2Address == itemMinters[i]
+              isOffChainMarketplaceMinter(itemMinters[i])
             ) {
-              isMarketplaceV3ItemMinter = true;
+              isOffChainMarketplaceItemMinter = true;
             }
           }
           // set flag only if store is item minter, otherwise unset it
           item.searchIsStoreMinter = isStoreItemMinter;
-          item.searchIsMarketplaceV3Minter = isMarketplaceV3ItemMinter;
+          item.searchIsMarketplaceV3Minter = isOffChainMarketplaceItemMinter;
         } else {
           console.log(`ERROR: Item not found: ${itemId}`);
         }
@@ -301,8 +300,13 @@ export function handleSetItemMinter(
   const { items, collections } = storedData;
   const addresses = getAddresses(Network.MATIC);
   const storeAddress = addresses.CollectionStore;
-  const marketplaceV3Address = addresses.MarketplaceV3;
-  const marketplaceV3_V2Address = addresses.MarketplaceV3_V2;
+  const offChainMarketplaceAddress = addresses.OffChainMarketplace;
+  const offChainMarketplaceV2Address = addresses.OffChainMarketplaceV2;
+  const offChainMarketplaceV3Address = addresses.OffChainMarketplaceV3;
+  const isOffChainMarketplaceMinter = (address: string) =>
+    address === offChainMarketplaceAddress ||
+    address === offChainMarketplaceV2Address ||
+    address === offChainMarketplaceV3Address;
   const minterAddress = event._minter;
   const itemId = event._itemId.toString();
   const id = getItemId(collectionAddress, itemId);
@@ -326,8 +330,7 @@ export function handleSetItemMinter(
         item.firstListedAt = BigInt(block.timestamp / 1000);
       }
     } else if (
-      minterAddress === marketplaceV3Address ||
-      minterAddress === marketplaceV3_V2Address
+      isOffChainMarketplaceMinter(minterAddress)
     ) {
       item.searchIsMarketplaceV3Minter = true;
 
@@ -353,8 +356,7 @@ export function handleSetItemMinter(
     } else if (
       collection != null &&
       !collection.searchIsMarketplaceV3Minter &&
-      (minterAddress == marketplaceV3Address ||
-        minterAddress == marketplaceV3_V2Address)
+      isOffChainMarketplaceMinter(minterAddress)
     ) {
       item.searchIsMarketplaceV3Minter = false;
     }
@@ -717,7 +719,7 @@ export async function handleIssue(
   storedData: PolygonStoredData,
   inMemoryData: PolygonInMemoryState,
   storeContractData: StoreContractData,
-  tradedEvent?: MarketplaceV3ABI.TradedEventArgs
+  tradedEvent?: OffChainMarketplaceABI.TradedEventArgs
 ): Promise<void> {
   const { items } = storedData;
   const itemId = event._itemId.toString();

@@ -5,7 +5,7 @@ import {
   OrderCreatedEventArgs,
   OrderSuccessfulEventArgs,
 } from "../../abi/Marketplace";
-import * as MarketplaceV3ABI from "../../abi/DecentralandMarketplaceEthereum";
+import * as OffChainMarketplaceABI from "../../abi/DecentralandMarketplaceEthereum";
 import { getCategory } from "../../common/utils/category";
 import {
   cancelActiveOrder,
@@ -34,7 +34,7 @@ import {
   getTradeEventData,
   getTradeEventType,
   TradeType,
-} from "../../common/utils/marketplaceV3";
+} from "../../common/utils/offChainMarketplace";
 import { normalizeTimestamp } from "../../common/utils/utils";
 
 export type MarkteplaceEvents =
@@ -226,10 +226,10 @@ export async function handleTraded(
   nft.updatedAt = timestamp;
 
   const addresses = getAddresses(Network.ETHEREUM);
-  const marketplaceV3Contract = new MarketplaceV3ABI.Contract(
+  const offChainMarketplaceContract = new OffChainMarketplaceABI.Contract(
     ctx,
     block.header,
-    addresses.MarketplaceV3
+    addresses.OffChainMarketplace
   );
 
   await trackSale(
@@ -240,7 +240,7 @@ export async function handleTraded(
     seller,
     nft.id,
     price,
-    await marketplaceV3Contract.feeRate(),
+    await offChainMarketplaceContract.feeRate(),
     BigInt(block.header.timestamp / 1000), // @TODO fix this, has the have the event hash not the block
     txHash,
     nfts,

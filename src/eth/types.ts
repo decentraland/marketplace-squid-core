@@ -6,7 +6,7 @@ import * as dclRegistrarABI from "../abi/DCLRegistrar";
 import * as marketplaceAbi from "../abi/Marketplace";
 import * as erc721BidAbi from "../abi/ERC721Bid";
 import * as DCLControllerV2Abi from "../abi/DCLControllerV2";
-import * as MarketplaceV3ABI from "../abi/DecentralandMarketplaceEthereum";
+import * as OffChainMarketplaceABI from "../abi/DecentralandMarketplaceEthereum";
 import { Mint, Transfer } from "../model";
 
 export type EthereumInMemoryState = {
@@ -50,7 +50,7 @@ export type EthereumInMemoryState = {
       | erc721abi.TransferEventArgs_2
       | erc721abi.OwnershipTransferredEventArgs
       | erc721abi.AddWearableEventArgs
-      | MarketplaceV3ABI.TradedEventArgs
+      | OffChainMarketplaceABI.TradedEventArgs
       | estateRegistryABI.CreateEstateEventArgs
       | estateRegistryABI.UpdateEventArgs
       | estateRegistryABI.AddLandEventArgs
