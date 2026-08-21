@@ -9,8 +9,8 @@ import * as dclRegistrarAbi from "../abi/DCLRegistrar";
 import * as marketplaceAbi from "../abi/Marketplace";
 import * as erc721Bid from "../abi/ERC721Bid";
 import * as dclControllerV2abi from "../abi/DCLControllerV2";
-import * as MarketplaceV3ABI from "../abi/DecentralandMarketplaceEthereum";
-import * as MarketplaceV3_V3ABI from "../abi/DecentralandMarketplaceEthereumV3";
+import * as OffChainMarketplaceABI from "../abi/DecentralandMarketplaceEthereum";
+import * as OffChainMarketplaceV3ABI from "../abi/DecentralandMarketplaceEthereumV3";
 import * as SpokeABI from "../abi/Spoke";
 import { Order, Sale, Transfer, Network as ModelNetwork } from "../model";
 import { dataSource, chainContext, logger, Context } from "./processor";
@@ -78,7 +78,7 @@ import { getWearableIdFromTokenURI } from "./modules/wearable";
 import {
   getTradeEventData,
   getTradeEventType,
-} from "../common/utils/marketplaceV3";
+} from "../common/utils/offChainMarketplace";
 
 const landCoordinates: Map<bigint, Coordinate> = new Map();
 const tokenURIs: Map<string, string> = new Map();
@@ -629,13 +629,13 @@ run(dataSource, db, async (simpleCtx) => {
             });
             break;
           }
-          case MarketplaceV3ABI.events.Traded.topic:
-          case MarketplaceV3_V3ABI.events.Traded.topic: {
+          case OffChainMarketplaceABI.events.Traded.topic:
+          case OffChainMarketplaceV3ABI.events.Traded.topic: {
             // V3 carries an extra indexed _tradeDigest, so it decodes with its own module.
             const event =
-              topic === MarketplaceV3_V3ABI.events.Traded.topic
-                ? MarketplaceV3_V3ABI.events.Traded.decode(log)
-                : MarketplaceV3ABI.events.Traded.decode(log);
+              topic === OffChainMarketplaceV3ABI.events.Traded.topic
+                ? OffChainMarketplaceV3ABI.events.Traded.decode(log)
+                : OffChainMarketplaceABI.events.Traded.decode(log);
             const tradeData = getTradeEventData(event, Network.ETHEREUM);
             // Nothing to index: not an order or a bid (a giveaway has no payment leg).
             if (!tradeData) {
@@ -828,12 +828,12 @@ run(dataSource, db, async (simpleCtx) => {
           counts
         );
       } else if (
-        topic === MarketplaceV3ABI.events.Traded.topic ||
-        topic === MarketplaceV3_V3ABI.events.Traded.topic
+        topic === OffChainMarketplaceABI.events.Traded.topic ||
+        topic === OffChainMarketplaceV3ABI.events.Traded.topic
       ) {
         await handleTraded(
           ctx,
-          event as MarketplaceV3ABI.TradedEventArgs,
+          event as OffChainMarketplaceABI.TradedEventArgs,
           block,
           log.transactionHash,
           nfts,

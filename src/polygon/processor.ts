@@ -16,8 +16,8 @@ import * as CommitteeABI from "./abi/Committee";
 import * as CollectionV2ABI from "./abi/CollectionV2";
 import * as RaritiesABI from "./abi/Rarity";
 import * as CollectionManagerABI from "./abi/CollectionManager";
-import * as MarketplaceV3 from "./abi/DecentralandMarketplacePolygon";
-import * as MarketplaceV3_V3 from "./abi/DecentralandMarketplacePolygonV3";
+import * as OffChainMarketplace from "./abi/DecentralandMarketplacePolygon";
+import * as OffChainMarketplaceV3 from "./abi/DecentralandMarketplacePolygonV3";
 import * as CreditsManagerABI from "./abi/CreditsManager";
 import * as SpokeABI from "../abi/Spoke";
 import { getBlockRange } from "../config";
@@ -181,15 +181,15 @@ export const dataSource = new DataSourceBuilder()
   })
   .addLog({
     where: {
-      address: [addresses.MarketplaceV3],
-      topic0: [MarketplaceV3.events.Traded.topic],
+      address: [addresses.OffChainMarketplace],
+      topic0: [OffChainMarketplace.events.Traded.topic],
     },
     include: { transaction: true },
   })
   .addLog({
     where: {
-      address: [addresses.MarketplaceV3_V2],
-      topic0: [MarketplaceV3.events.Traded.topic],
+      address: [addresses.OffChainMarketplaceV2],
+      topic0: [OffChainMarketplace.events.Traded.topic],
     },
     include: { transaction: true },
   })
@@ -197,21 +197,21 @@ export const dataSource = new DataSourceBuilder()
   // _tradeDigest, so the topic differs from V1/V2 and must come from that module.
   .addLog({
     where: {
-      address: [addresses.MarketplaceV3_V3],
-      topic0: [MarketplaceV3_V3.events.Traded.topic],
+      address: [addresses.OffChainMarketplaceV3],
+      topic0: [OffChainMarketplaceV3.events.Traded.topic],
     },
     include: { transaction: true },
   })
   // Fee configuration of the V3 marketplace. handleTraded needs these values on every trade and
   // used to fetch them over RPC each time; ingesting the changes instead keeps the cached copy
-  // current for free. Only the MarketplaceV3 address: that is the contract handleTraded reads.
+  // current for free. Only the OffChainMarketplace address: that is the contract handleTraded reads.
   .addLog({
     where: {
-      address: [addresses.MarketplaceV3],
+      address: [addresses.OffChainMarketplace],
       topic0: [
-        MarketplaceV3.events.FeeCollectorUpdated.topic,
-        MarketplaceV3.events.FeeRateUpdated.topic,
-        MarketplaceV3.events.RoyaltiesRateUpdated.topic,
+        OffChainMarketplace.events.FeeCollectorUpdated.topic,
+        OffChainMarketplace.events.FeeRateUpdated.topic,
+        OffChainMarketplace.events.RoyaltiesRateUpdated.topic,
       ],
     },
   })

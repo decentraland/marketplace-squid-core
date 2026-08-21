@@ -435,6 +435,9 @@ type Collection @entity {
 
   # Searcheable fields
   searchIsStoreMinter: Boolean!
+  # Whether an off-chain marketplace is a minter. Named MarketplaceV3 because that is what this repo
+  # used to call the off-chain marketplace; the code now says OffChainMarketplace, but renaming a
+  # persisted column would need a migration and a full reindex, so the field keeps the old spelling.
   searchIsMarketplaceV3Minter: Boolean!
   searchText: String!
 
@@ -494,6 +497,9 @@ type Item @entity @index(fields: ["collection", "blockchainId"]) {
   ## Collection fields
   searchIsCollectionApproved: Boolean
   searchIsStoreMinter: Boolean!
+  # Whether an off-chain marketplace is a minter. Named MarketplaceV3 because that is what this repo
+  # used to call the off-chain marketplace; the code now says OffChainMarketplace, but renaming a
+  # persisted column would need a migration and a full reindex, so the field keeps the old spelling.
   searchIsMarketplaceV3Minter: Boolean!
 
   ## Wearables search fields

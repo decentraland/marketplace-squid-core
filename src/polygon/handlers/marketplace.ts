@@ -12,8 +12,8 @@ import {
   updateNFTOrderProperties,
 } from "../../common/utils";
 import * as CollectionV2ABI from "../abi/CollectionV2";
-import * as MarketplaceV3ABI from "../abi/DecentralandMarketplacePolygon";
-import * as MarketplaceV3_V3ABI from "../abi/DecentralandMarketplacePolygonV3";
+import * as OffChainMarketplaceABI from "../abi/DecentralandMarketplacePolygon";
+import * as OffChainMarketplaceV3ABI from "../abi/DecentralandMarketplacePolygonV3";
 import {
   Category,
   Count,
@@ -30,7 +30,7 @@ import { getAddresses } from "../../common/utils/addresses";
 import {
   MarketplaceContractData,
   MarketplaceV2ContractData,
-  getMarketplaceV3ContractData,
+  getOffChainMarketplaceContractData,
 } from "../state";
 import { Context } from "../processor";
 import { TradedEventArgs } from "../abi/DecentralandMarketplacePolygon";
@@ -40,7 +40,7 @@ import {
   getTradeEventType,
   TradeAssetType,
   TradeType,
-} from "../../common/utils/marketplaceV3";
+} from "../../common/utils/offChainMarketplace";
 import { normalizeTimestamp } from "../../common/utils/utils";
 import { selectIssueLogForTrade } from "../utils/issueLog";
 
@@ -260,9 +260,9 @@ export async function handleTraded(
   const { assetType, collectionAddress, tokenId, buyer, price, seller } =
     tradeData;
   // Read once and kept current from the contract's own *Updated events — see
-  // getMarketplaceV3ContractData. This used to be three sequential eth_calls PER Traded event.
+  // getOffChainMarketplaceContractData. This used to be three sequential eth_calls PER Traded event.
   const { feeCollector, feeRate, royaltiesRate } =
-    await getMarketplaceV3ContractData(ctx, block.header);
+    await getOffChainMarketplaceContractData(ctx, block.header);
   const feesCollector = feeCollector;
 
   // NFT
@@ -354,16 +354,16 @@ export async function handleTraded(
     const logFromTraded = block.logs.find(
       (log) =>
         log.transactionIndex === transaction.transactionIndex &&
-        (log.topics[0] === MarketplaceV3ABI.events.Traded.topic ||
-          log.topics[0] === MarketplaceV3_V3ABI.events.Traded.topic)
+        (log.topics[0] === OffChainMarketplaceABI.events.Traded.topic ||
+          log.topics[0] === OffChainMarketplaceV3ABI.events.Traded.topic)
     );
 
     if (!logFromTraded || !logFromTraded.address) {
       console.log("ERROR: logFromTraded not found");
     } else if (
-      logFromTraded.address !== addresses.MarketplaceV3 &&
-      logFromTraded.address !== addresses.MarketplaceV3_V2 &&
-      logFromTraded.address !== addresses.MarketplaceV3_V3
+      logFromTraded.address !== addresses.OffChainMarketplace &&
+      logFromTraded.address !== addresses.OffChainMarketplaceV2 &&
+      logFromTraded.address !== addresses.OffChainMarketplaceV3
     ) {
       console.log(
         "ERROR: logFromTraded is not the marketplace v3, v3 v2 or v3 v3"

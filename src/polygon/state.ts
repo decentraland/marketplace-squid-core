@@ -4,7 +4,7 @@ import { Sale } from "../model";
 import { getAddresses } from "../common/utils/addresses";
 import { Contract as MarketplaceContract } from "./abi/Marketplace";
 import { Contract as MarketplaceV2Contract } from "./abi/MarketplaceV2";
-import { Contract as MarketplaceV3Contract } from "./abi/DecentralandMarketplacePolygon";
+import { Contract as OffChainMarketplaceContract } from "./abi/DecentralandMarketplacePolygon";
 import { Contract as CollectionStoreContract } from "./abi/CollectionStore";
 import { Contract as ERC721BidV2Contract } from "./abi/ERC721BidV2";
 import { Block, Context } from "./processor";
@@ -84,13 +84,13 @@ export let storeContractData: StoreContractData = {
   feeOwner: undefined,
 };
 
-export type MarketplaceV3ContractData = {
+export type OffChainMarketplaceContractData = {
   feeCollector: string | undefined;
   feeRate: bigint | undefined;
   royaltiesRate: bigint | undefined;
 };
 
-export let marketplaceV3ContractData: MarketplaceV3ContractData = {
+export let offChainMarketplaceContractData: OffChainMarketplaceContractData = {
   feeCollector: undefined,
   feeRate: undefined,
   royaltiesRate: undefined,
@@ -112,11 +112,11 @@ export let marketplaceV3ContractData: MarketplaceV3ContractData = {
  * money columns (feesCollectorCut, royaltiesCut), so a read failure must fail the batch and be
  * retried — swallowing it would either skip the sale or record it with empty fees.
  */
-export const getMarketplaceV3ContractData = async (
+export const getOffChainMarketplaceContractData = async (
   ctx: Context,
   block: Block
 ): Promise<{ feeCollector: string; feeRate: bigint; royaltiesRate: bigint }> => {
-  let { feeCollector, feeRate, royaltiesRate } = marketplaceV3ContractData;
+  let { feeCollector, feeRate, royaltiesRate } = offChainMarketplaceContractData;
   if (
     feeCollector === undefined ||
     feeRate === undefined ||
@@ -124,29 +124,29 @@ export const getMarketplaceV3ContractData = async (
   ) {
     console.log("INFO: Fetching marketplace v3 contract data for first time");
     const addresses = getAddresses(Network.MATIC);
-    const c = new MarketplaceV3Contract(ctx, block, addresses.MarketplaceV3);
+    const c = new OffChainMarketplaceContract(ctx, block, addresses.OffChainMarketplace);
     [feeCollector, feeRate, royaltiesRate] = await Promise.all([
       c.feeCollector(),
       c.feeRate(),
       c.royaltiesRate(),
     ]);
-    marketplaceV3ContractData.feeCollector = feeCollector;
-    marketplaceV3ContractData.feeRate = feeRate;
-    marketplaceV3ContractData.royaltiesRate = royaltiesRate;
+    offChainMarketplaceContractData.feeCollector = feeCollector;
+    offChainMarketplaceContractData.feeRate = feeRate;
+    offChainMarketplaceContractData.royaltiesRate = royaltiesRate;
   }
   return { feeCollector, feeRate, royaltiesRate };
 };
 
-export const setMarketplaceV3FeeCollector = (value: string) => {
-  marketplaceV3ContractData.feeCollector = value;
+export const setOffChainMarketplaceFeeCollector = (value: string) => {
+  offChainMarketplaceContractData.feeCollector = value;
 };
 
-export const setMarketplaceV3FeeRate = (value: bigint) => {
-  marketplaceV3ContractData.feeRate = value;
+export const setOffChainMarketplaceFeeRate = (value: bigint) => {
+  offChainMarketplaceContractData.feeRate = value;
 };
 
-export const setMarketplaceV3RoyaltiesRate = (value: bigint) => {
-  marketplaceV3ContractData.royaltiesRate = value;
+export const setOffChainMarketplaceRoyaltiesRate = (value: bigint) => {
+  offChainMarketplaceContractData.royaltiesRate = value;
 };
 
 // CollectionStore contract creation blocks

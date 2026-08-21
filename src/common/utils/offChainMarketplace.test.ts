@@ -8,7 +8,7 @@ process.env.POLYGON_CHAIN_ID = "80002";
 import { Network } from "@dcl/schemas";
 
 import { TradedEventArgs } from "../../abi/DecentralandMarketplaceEthereum";
-import { getTradeEventData, TradeAssetType } from "./marketplaceV3";
+import { getTradeEventData, TradeAssetType } from "./offChainMarketplace";
 import { MANA } from "../../polygon/addresses/amoy";
 
 /**
