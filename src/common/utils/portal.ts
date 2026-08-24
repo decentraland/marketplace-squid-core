@@ -20,8 +20,7 @@ export function portalSource(dataset: string): {
   http: { headers: Record<string, string> };
 } {
   const host = process.env.SQD_PORTAL_URL || DEFAULT_PORTAL_HOST;
-  // The Portal now has its own parameter (SSM `ops-param-sqd-portal-api-key`), and reading ONLY
-  // that one is the point of this function.
+  // The Portal now has its own key variable, and reading ONLY that one is the point of this function.
   //
   // It used to fall back to SQUID_API_KEY, which is the variable wired to every squid for the v2
   // archive (`setGateway({ apiKey })`, still how the trades squid ingests). Those are two products
