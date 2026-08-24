@@ -1,7 +1,10 @@
+import { Null } from "../../common/utils/constants";
+
 export const CollectionFactory = "0x2A72Ec4241Ac4fBc915ae98aC5a5b01AdE721f4B";
 export const CollectionFactoryV3 = "0x802de0c509add2ee29de24de7225daaff4741c43";
 
-export const Bid = "0x0000000000000000000000000000000000000000";
+// Bid v1 is Ethereum-only; Polygon has only ever had BidV2.
+export const Bid = Null;
 export const BidV2 = "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d";
 
 export const Marketplace = "0x2a09a000224f5dbe0E17214cA95CDe506DA7CB74";

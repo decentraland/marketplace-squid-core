@@ -1,5 +1,3 @@
-export const Null = "0x0000000000000000000000000000000000000000";
-
 // This will be correctly set if you deploy using `npm run deploy` or using the deploy.ts script directly
 export const LANDRegistry = "0x42f4ba48791e2de32f5fbf553441c2672864bb33";
 export const EstateRegistry = "0x369a7fbe718c870c79f99fb423882e8dd8b20486";

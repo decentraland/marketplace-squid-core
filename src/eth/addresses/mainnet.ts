@@ -1,4 +1,4 @@
-export const Null = "0x0000000000000000000000000000000000000000";
+import { Null } from "../../common/utils/constants";
 
 // This will be correctly set if you deploy using `npm run deploy` or using the deploy.ts script directly
 export const LANDRegistry = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
