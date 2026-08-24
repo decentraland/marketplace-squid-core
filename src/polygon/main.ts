@@ -27,7 +27,8 @@ import * as MarketplaceABI from "./abi/Marketplace";
 import * as MarketplaceV2ABI from "./abi/MarketplaceV2";
 import * as CommitteeABI from "./abi/Committee";
 import * as RaritiesABI from "./abi/Rarity";
-import * as MarketplaceV3ABI from "./abi/DecentralandMarketplacePolygon";
+import * as OffChainMarketplaceABI from "./abi/DecentralandMarketplacePolygon";
+import * as OffChainMarketplaceV3ABI from "./abi/DecentralandMarketplacePolygonV3";
 import * as ERC721BidABI from "./abi/ERC721Bid";
 import * as CollectionStoreABI from "./abi/CollectionStore";
 import * as CollectionManagerABI from "./abi/CollectionManager";
@@ -76,9 +77,9 @@ import {
   getStoreContractData,
   setBidOwnerCutPerMillion,
   setMarketplaceOwnerCutPerMillion,
-  setMarketplaceV3FeeCollector,
-  setMarketplaceV3FeeRate,
-  setMarketplaceV3RoyaltiesRate,
+  setOffChainMarketplaceFeeCollector,
+  setOffChainMarketplaceFeeRate,
+  setOffChainMarketplaceRoyaltiesRate,
   setStoreFee,
   setStoreFeeOwner,
 } from "./state";
@@ -105,7 +106,7 @@ import { checkCpuUsageAndThrottle } from "../tools/os";
 import {
   getTradeEventData,
   getTradeEventType,
-} from "../common/utils/marketplaceV3";
+} from "../common/utils/offChainMarketplace";
 import {
   getLastNotified,
   setLastNotified,
@@ -159,7 +160,8 @@ const topicToName: Record<string, string> = {
   [CollectionV2ABI.events.Transfer.topic]: "Transfer",
   [CollectionV2ABI.events.Issue.topic]: "Issue",
   [CollectionV2ABI.events.AddItem.topic]: "AddItem",
-  [MarketplaceV3ABI.events.Traded.topic]: "Traded",
+  [OffChainMarketplaceABI.events.Traded.topic]: "Traded",
+  [OffChainMarketplaceV3ABI.events.Traded.topic]: "Traded",
 };
 const preloadedCollections = loadCollections().addresses;
 // Set form for O(1) membership checks in the per-log hot path (~84k logs/batch).
@@ -501,8 +503,9 @@ run(dataSource, db, async (simpleCtx) => {
           log.address === addresses.RaritiesWithOracle ||
           log.address === addresses.Rarity ||
           log.address === addresses.CollectionManager ||
-          log.address === addresses.MarketplaceV3 ||
-          log.address === addresses.MarketplaceV3_V2 ||
+          log.address === addresses.OffChainMarketplace ||
+          log.address === addresses.OffChainMarketplaceV2 ||
+          log.address === addresses.OffChainMarketplaceV3 ||
           preloadedCollectionsSet.has(log.address) ||
           collectionIdsNotIncludedInPreloaded.has(log.address)
       )
@@ -1003,21 +1006,21 @@ run(dataSource, db, async (simpleCtx) => {
           // span ~1M blocks, and it would only matter around the handful of blocks where fees
           // actually changed. Resolving per-trade needs the change recorded with its block and
           // applied as-of, which is a bigger change than this one.
-          case MarketplaceV3ABI.events.FeeCollectorUpdated.topic: {
-            setMarketplaceV3FeeCollector(
-              MarketplaceV3ABI.events.FeeCollectorUpdated.decode(log)._feeCollector
+          case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic: {
+            setOffChainMarketplaceFeeCollector(
+              OffChainMarketplaceABI.events.FeeCollectorUpdated.decode(log)._feeCollector
             );
             break;
           }
-          case MarketplaceV3ABI.events.FeeRateUpdated.topic: {
-            setMarketplaceV3FeeRate(
-              MarketplaceV3ABI.events.FeeRateUpdated.decode(log)._feeRate
+          case OffChainMarketplaceABI.events.FeeRateUpdated.topic: {
+            setOffChainMarketplaceFeeRate(
+              OffChainMarketplaceABI.events.FeeRateUpdated.decode(log)._feeRate
             );
             break;
           }
-          case MarketplaceV3ABI.events.RoyaltiesRateUpdated.topic: {
-            setMarketplaceV3RoyaltiesRate(
-              MarketplaceV3ABI.events.RoyaltiesRateUpdated.decode(log)._royaltiesRate
+          case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic: {
+            setOffChainMarketplaceRoyaltiesRate(
+              OffChainMarketplaceABI.events.RoyaltiesRateUpdated.decode(log)._royaltiesRate
             );
             break;
           }
@@ -1222,8 +1225,13 @@ run(dataSource, db, async (simpleCtx) => {
             raritiesSnapshotDirty = true; // Mark snapshot as needing refresh
             break;
           }
-          case MarketplaceV3ABI.events.Traded.topic: {
-            const event = MarketplaceV3ABI.events.Traded.decode(log);
+          case OffChainMarketplaceABI.events.Traded.topic:
+          case OffChainMarketplaceV3ABI.events.Traded.topic: {
+            // V3 carries an extra indexed _tradeDigest, so it decodes with its own module.
+            const event =
+              topic === OffChainMarketplaceV3ABI.events.Traded.topic
+                ? OffChainMarketplaceV3ABI.events.Traded.decode(log)
+                : OffChainMarketplaceABI.events.Traded.decode(log);
             const tradeData = getTradeEventData(event, Network.MATIC);
             // Nothing to index: not an order or a bid (a giveaway has no payment leg).
             if (!tradeData) {
@@ -1468,14 +1476,15 @@ run(dataSource, db, async (simpleCtx) => {
             storedData
           );
           break;
-        case MarketplaceV3ABI.events.Traded.topic: {
+        case OffChainMarketplaceABI.events.Traded.topic:
+        case OffChainMarketplaceV3ABI.events.Traded.topic: {
           if (!storeContractData || !transaction) {
             console.log("ERROR: storeContractData not found");
             break;
           }
           await handleTraded(
             ctx,
-            event as MarketplaceV3ABI.TradedEventArgs,
+            event as OffChainMarketplaceABI.TradedEventArgs,
             block,
             transaction,
             storedData,
@@ -1490,9 +1499,11 @@ run(dataSource, db, async (simpleCtx) => {
           }
           if (
             (event as CollectionV2ABI.IssueEventArgs)._caller ===
-              addresses.MarketplaceV3 ||
+              addresses.OffChainMarketplace ||
             (event as CollectionV2ABI.IssueEventArgs)._caller ===
-              addresses.MarketplaceV3_V2
+              addresses.OffChainMarketplaceV2 ||
+            (event as CollectionV2ABI.IssueEventArgs)._caller ===
+              addresses.OffChainMarketplaceV3
           ) {
             break;
           }

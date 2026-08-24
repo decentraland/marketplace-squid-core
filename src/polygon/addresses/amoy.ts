@@ -1,7 +1,10 @@
+import { Null } from "../../common/utils/constants";
+
 export const CollectionFactory = "0x2A72Ec4241Ac4fBc915ae98aC5a5b01AdE721f4B";
 export const CollectionFactoryV3 = "0x802de0c509add2ee29de24de7225daaff4741c43";
 
-export const Bid = "0x0000000000000000000000000000000000000000";
+// Bid v1 is Ethereum-only; Polygon has only ever had BidV2.
+export const Bid = Null;
 export const BidV2 = "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d";
 
 export const Marketplace = "0x2a09a000224f5dbe0E17214cA95CDe506DA7CB74";
@@ -15,8 +18,9 @@ export const RaritiesWithOracle = "0x25b6b4bac4adb582a0abd475439da6730777fbf7";
 
 export const Rarity = "0xddb3781fff645325c8896aa1f067baa381607ecc";
 export const CollectionManager = "0x5309ae874fc4eb21adcd63f8b6c3f766cc3b1849";
-export const MarketplaceV3 = "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d";
-export const MarketplaceV3_V2 = "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7";
+export const OffChainMarketplace = "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d";
+export const OffChainMarketplaceV2 = "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7";
+export const OffChainMarketplaceV3 = "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c";
 export const MANA = "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0";
 export const TRANSAK_TOKEN = "0x0c86a754a29714c4fe9c6f1359fa7099ed174c0b";
 

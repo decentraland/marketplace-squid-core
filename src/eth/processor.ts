@@ -15,7 +15,8 @@ import * as marketplaceAbi from "../abi/Marketplace";
 import * as dclRegistrarAbi from "../abi/DCLRegistrar";
 import * as dclControllerV2 from "../abi/DCLControllerV2";
 import * as erc721BidAbi from "../abi/ERC721Bid";
-import * as MarketplaceV3 from "../abi/DecentralandMarketplaceEthereum";
+import * as OffChainMarketplace from "../abi/DecentralandMarketplaceEthereum";
+import * as OffChainMarketplaceV3 from "../abi/DecentralandMarketplaceEthereumV3";
 import * as SpokeABI from "../abi/Spoke";
 
 const addresses = getAddresses(Network.ETHEREUM);
@@ -156,15 +157,24 @@ export const dataSource = new DataSourceBuilder()
   })
   .addLog({
     where: {
-      address: [addresses.MarketplaceV3],
-      topic0: [MarketplaceV3.events.Traded.topic],
+      address: [addresses.OffChainMarketplace],
+      topic0: [OffChainMarketplace.events.Traded.topic],
     },
     include: { transaction: true },
   })
   .addLog({
     where: {
-      address: [addresses.MarketplaceV3_V2],
-      topic0: [MarketplaceV3.events.Traded.topic],
+      address: [addresses.OffChainMarketplaceV2],
+      topic0: [OffChainMarketplace.events.Traded.topic],
+    },
+    include: { transaction: true },
+  })
+  // V3 declares its own ABI module: its Traded event carries an extra indexed
+  // _tradeDigest, so the topic differs from V1/V2 and must come from that module.
+  .addLog({
+    where: {
+      address: [addresses.OffChainMarketplaceV3],
+      topic0: [OffChainMarketplaceV3.events.Traded.topic],
     },
     include: { transaction: true },
   })
