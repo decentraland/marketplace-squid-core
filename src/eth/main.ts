@@ -103,10 +103,22 @@ const ETH_INITIAL_BLOCK = getBlockRange(Network.ETHEREUM).from;
 const schemaName = process.env.DB_SCHEMA;
 const db = new TypeormDatabase({
   isolationLevel: "READ COMMITTED",
-  // Portal ingests from the finalized stream; a log-filtered stream yields
-  // non-contiguous blocks which the hot-block path rejects. Finality on Ethereum
-  // is ~15 min behind head — acceptable for the marketplace indexer.
-  supportHotBlocks: false,
+  // Index the unfinalized tip, and roll it back if the chain reorganises.
+  //
+  // With this false the processor reads Portal's FINALIZED stream, and Ethereum finality is two
+  // epochs, so every cancellation and bid retract on L1 stayed invisible for ~13-15 minutes after
+  // the user's transaction confirmed. That is what the marketplace showed as "nothing happens".
+  //
+  // The comment this replaces claimed the hot path rejects the non-contiguous blocks a log-filtered
+  // stream yields. It does not: `assertBlocksContinuity` only requires block numbers to increase,
+  // never adjacency. The assertion that actually fired ("non-hot database received unfinalized
+  // blocks") lives in the NON-hot branch, so it fired *because* this was false.
+  //
+  // Rollback granularity is coarser than the chain: the recovery log holds only the blocks that
+  // matched our filters, so a reorg reverts to the newest logged block at or below the fork. That
+  // over-reverts and re-applies, which is correct, and is how this squid ran before the Portal
+  // migration (setFinalityConfirmation(75) with hot blocks ON, not a 75-block wait).
+  supportHotBlocks: true,
   stateSchema: `eth_processor_${schemaName}`,
 });
 // Expose Prometheus metrics (sqd_processor_last_block / chain_height) — the squid

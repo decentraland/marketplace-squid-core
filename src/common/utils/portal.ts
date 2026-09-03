@@ -17,7 +17,7 @@ const DEFAULT_PORTAL_HOST = "https://shared.portal.sqd.dev";
  */
 export function portalSource(dataset: string): {
   url: string;
-  http: { headers: Record<string, string> };
+  http: { retryAttempts: number; headers: Record<string, string> };
 } {
   const host = process.env.SQD_PORTAL_URL || DEFAULT_PORTAL_HOST;
   // The Portal now has its own key variable, and reading ONLY that one is the point of this function.
@@ -31,6 +31,15 @@ export function portalSource(dataset: string): {
   return {
     url: `${host}/datasets/${dataset}`,
     http: {
+      // Never give up on a Portal hiccup. A 503 here is a transient: it is what the Portal answers
+      // while a freshly added chunk is still replicating to its workers, so the data is fine and a
+      // later attempt succeeds. Exhausting the budget instead kills the processor, ECS replaces the
+      // task, and a replacement task is what triggers a full re-index, which is hours of work to
+      // survive a transient that lasted a minute. Waiting forever is strictly cheaper.
+      //
+      // Needs portal-client >= 0.7.0: until then `request()` overrode this with a hardcoded 6, so
+      // the option looked set and did nothing.
+      retryAttempts: Infinity,
       headers: {
         "x-api-key": assertNotNull(
           process.env.SQD_PORTAL_API_KEY,
