@@ -9,11 +9,12 @@ const ENV_LABEL = isMainnet ? "prd" : "dev";
 
 // The status table must be referenced UNQUALIFIED. The management server's promote
 // physically RENAMES the indexer schema (marketplace_squid_<ts> -> squid_marketplace)
-// and updates the writer role's search_path, so a name qualified with DB_SCHEMA goes
-// stale after promotion ("schema does not exist" on every batch). An unqualified name
-// follows the rename through search_path, exactly like every entity table does.
-// DB_SCHEMA remains the deployment's identity and is used for Slack labels only.
-const SCHEMA = process.env.DB_SCHEMA;
+// and updates the writer role's search_path, so a name qualified with the deployment's
+// own schema goes stale after promotion ("schema does not exist" on every batch). An
+// unqualified name follows the rename through search_path, like every entity table does.
+// SQUID_SCHEMA carries the deployment's identity and is used for Slack labels only.
+// DB_SCHEMA is deliberately unset, because typeorm-config would pin search_path to it.
+const SCHEMA = process.env.SQUID_SCHEMA;
 const STATUS_TABLE = "head_sync_status";
 
 let slackComponent: ISlackComponent | undefined;

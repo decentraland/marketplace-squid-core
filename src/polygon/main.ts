@@ -117,7 +117,9 @@ import {
   notifyHeadReachedOnce,
 } from "../common/utils/head-notification";
 
-const schemaName = process.env.DB_SCHEMA;
+// SQUID_SCHEMA, not DB_SCHEMA: typeorm-config would turn the latter into a
+// per-connection search_path pin that promotion invalidates (see indexer.sh).
+const schemaName = process.env.SQUID_SCHEMA;
 const addresses = getAddresses(Network.MATIC);
 let bytesRead = 0; // amount of bytes received
 
