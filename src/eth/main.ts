@@ -100,7 +100,9 @@ let indexRecreateAttempts = 0;
 const MAX_INDEX_RECREATE_ATTEMPTS = 5;
 const ETH_INITIAL_BLOCK = getBlockRange(Network.ETHEREUM).from;
 
-const schemaName = process.env.DB_SCHEMA;
+// SQUID_SCHEMA, not DB_SCHEMA: typeorm-config would turn the latter into a
+// per-connection search_path pin that promotion invalidates (see indexer.sh).
+const schemaName = process.env.SQUID_SCHEMA;
 const db = new TypeormDatabase({
   isolationLevel: "READ COMMITTED",
   // Index the unfinalized tip, and roll it back if the chain reorganises.

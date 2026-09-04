@@ -98,10 +98,22 @@ unset PGPASSWORD
 
 # Construct the DB_URL with the new user
 export DB_URL=postgresql://$NEW_DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
-export DB_SCHEMA=$NEW_SCHEMA_NAME
+# The deployment's schema name goes to SQUID_SCHEMA, and DB_SCHEMA is left unset.
+#
+# @subsquid/typeorm-config >= 4.2.0 turns DB_SCHEMA into a per-connection
+# `options=-c search_path="<name>"` sent in the pg startup packet, which overrides the
+# role's default search_path on every connection. That is incompatible with promotion:
+# the management server RENAMES this schema to squid_marketplace and updates the role's
+# default, so a pinned name goes stale the instant the squid is promoted. Every
+# unqualified query then fails with "relation does not exist", and because the pin comes
+# from the environment rather than from a stale session, restarting the process cannot
+# recover it. Leaving DB_SCHEMA unset keeps the role default authoritative, which is
+# exactly what the ALTER USER above and the promote both maintain.
+export SQUID_SCHEMA=$NEW_SCHEMA_NAME
+unset DB_SCHEMA
 
 # Log the constructed DB_URL
-echo "Exported DB_SCHEMA: $DB_SCHEMA"
+echo "Exported SQUID_SCHEMA: $SQUID_SCHEMA"
 
 # Start the processor service and the GraphQL server, and write logs to a file
 LOG_FILE="sqd_run_log_${CURRENT_TIMESTAMP}.txt"

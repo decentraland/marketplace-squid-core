@@ -18,11 +18,13 @@ fi
 
 # Construct the DB_URL with the new user
 export DB_URL=postgresql://$SQUID_DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
-export DB_SCHEMA=$SQUID_SCHEMA
+# Exported as SQUID_SCHEMA, never DB_SCHEMA: see the note in indexer.sh.
+export SQUID_SCHEMA
+unset DB_SCHEMA
 
 # Log the constructed DB_URL
 echo "Exported DB_URL: $DB_URL"
-echo "Exported DB_SCHEMA: $DB_SCHEMA"
+echo "Exported SQUID_SCHEMA: $SQUID_SCHEMA"
 
 export CURRENT_SQUID_DB_USER=$SQUID_DB_USER
 echo "Exported CURRENT_SQUID_DB_USER: $SQUID_DB_USER"
