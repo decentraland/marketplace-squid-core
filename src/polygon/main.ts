@@ -1000,34 +1000,33 @@ run(dataSource, db, async (simpleCtx) => {
             });
             break;
           }
-          // Keep the emitting marketplace's cached fee configuration current. Same shape as the
-          // legacy Marketplace/Bid cases below,
-          // and it inherits their one caveat: these are applied while events are accumulated,
-          // whereas Traded is handled later in the batch. So a fee change and trades in the SAME
-          // batch are applied out of order — trades before the change would see the new value.
-          // At head a batch is seconds wide so this cannot happen; during a backfill a batch can
-          // span ~1M blocks, and it would only matter around the handful of blocks where fees
-          // actually changed. Resolving per-trade needs the change recorded with its block and
-          // applied as-of, which is a bigger change than this one.
+          // Fee updates are queued, not applied: the second pass replays them in log order, so a
+          // trade reads the configuration as of its own position rather than the batch's last one.
           case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic: {
-            setOffChainMarketplaceFeeCollector(
-              log.address,
-              OffChainMarketplaceABI.events.FeeCollectorUpdated.decode(log)._feeCollector
-            );
+            events.push({
+              topic,
+              event: OffChainMarketplaceABI.events.FeeCollectorUpdated.decode(log),
+              block,
+              log,
+            });
             break;
           }
           case OffChainMarketplaceABI.events.FeeRateUpdated.topic: {
-            setOffChainMarketplaceFeeRate(
-              log.address,
-              OffChainMarketplaceABI.events.FeeRateUpdated.decode(log)._feeRate
-            );
+            events.push({
+              topic,
+              event: OffChainMarketplaceABI.events.FeeRateUpdated.decode(log),
+              block,
+              log,
+            });
             break;
           }
           case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic: {
-            setOffChainMarketplaceRoyaltiesRate(
-              log.address,
-              OffChainMarketplaceABI.events.RoyaltiesRateUpdated.decode(log)._royaltiesRate
-            );
+            events.push({
+              topic,
+              event: OffChainMarketplaceABI.events.RoyaltiesRateUpdated.decode(log),
+              block,
+              log,
+            });
             break;
           }
           case MarketplaceV2ABI.events.ChangedFeesCollectorCutPerMillion.topic:
@@ -1480,6 +1479,24 @@ run(dataSource, db, async (simpleCtx) => {
             event as CollectionV2ABI.UpdateItemDataEventArgs,
             block.header,
             storedData
+          );
+          break;
+        case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic:
+          setOffChainMarketplaceFeeCollector(
+            log.address,
+            (event as OffChainMarketplaceABI.FeeCollectorUpdatedEventArgs)._feeCollector
+          );
+          break;
+        case OffChainMarketplaceABI.events.FeeRateUpdated.topic:
+          setOffChainMarketplaceFeeRate(
+            log.address,
+            (event as OffChainMarketplaceABI.FeeRateUpdatedEventArgs)._feeRate
+          );
+          break;
+        case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic:
+          setOffChainMarketplaceRoyaltiesRate(
+            log.address,
+            (event as OffChainMarketplaceABI.RoyaltiesRateUpdatedEventArgs)._royaltiesRate
           );
           break;
         case OffChainMarketplaceABI.events.Traded.topic:
