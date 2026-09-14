@@ -91,21 +91,80 @@ export type OffChainMarketplaceContractData = {
 };
 
 // Keyed by the emitting marketplace, lowercased: every deployed version keeps its own configuration.
+// Only batches that complete reach this map; see the staged copy below.
 export const offChainMarketplaceContractData = new Map<
   string,
   OffChainMarketplaceContractData
 >();
 
-const getOrCreateOffChainMarketplaceContractData = (
+/**
+ * Fee writes made while a batch runs. A batch that throws is retried with the same process memory,
+ * so writing straight to the committed map would let the retry's early trades read fee values from
+ * later in that same batch. Everything a batch learns — replayed updates and cold-cache seeds alike —
+ * lands here and is folded into the committed map only once the batch has completed.
+ */
+let stagedOffChainMarketplaceContractData: Map<
+  string,
+  OffChainMarketplaceContractData
+> | null = null;
+
+const emptyFeeConfig = (): OffChainMarketplaceContractData => ({
+  feeCollector: undefined,
+  feeRate: undefined,
+  royaltiesRate: undefined,
+});
+
+const mergeFeeConfig = (
+  base: OffChainMarketplaceContractData,
+  patch: Partial<OffChainMarketplaceContractData>
+): OffChainMarketplaceContractData => ({
+  feeCollector: patch.feeCollector ?? base.feeCollector,
+  feeRate: patch.feeRate ?? base.feeRate,
+  royaltiesRate: patch.royaltiesRate ?? base.royaltiesRate,
+});
+
+/** Opens a batch's staging area, dropping whatever a failed previous batch left behind. */
+export const beginOffChainMarketplaceFeeBatch = () => {
+  stagedOffChainMarketplaceContractData = new Map();
+};
+
+/** Folds the batch's staged writes into the committed cache. Call once the batch has completed. */
+export const commitOffChainMarketplaceFeeBatch = () => {
+  if (!stagedOffChainMarketplaceContractData) return;
+  for (const [key, patch] of stagedOffChainMarketplaceContractData) {
+    offChainMarketplaceContractData.set(
+      key,
+      mergeFeeConfig(offChainMarketplaceContractData.get(key) ?? emptyFeeConfig(), patch)
+    );
+  }
+  stagedOffChainMarketplaceContractData = null;
+};
+
+/** Empties the committed cache and any open batch. For tests. */
+export const resetOffChainMarketplaceContractData = () => {
+  offChainMarketplaceContractData.clear();
+  stagedOffChainMarketplaceContractData = null;
+};
+
+/** What the batch currently knows about a marketplace: committed values under its staged writes. */
+const viewOffChainMarketplaceContractData = (
   marketplaceAddress: string
 ): OffChainMarketplaceContractData => {
   const key = marketplaceAddress.toLowerCase();
-  let data = offChainMarketplaceContractData.get(key);
-  if (!data) {
-    data = { feeCollector: undefined, feeRate: undefined, royaltiesRate: undefined };
-    offChainMarketplaceContractData.set(key, data);
-  }
-  return data;
+  return mergeFeeConfig(
+    offChainMarketplaceContractData.get(key) ?? emptyFeeConfig(),
+    stagedOffChainMarketplaceContractData?.get(key) ?? emptyFeeConfig()
+  );
+};
+
+const writeOffChainMarketplaceContractData = (
+  marketplaceAddress: string,
+  patch: Partial<OffChainMarketplaceContractData>
+) => {
+  const key = marketplaceAddress.toLowerCase();
+  // Outside a batch (tests, tooling) writes go straight to the committed cache.
+  const target = stagedOffChainMarketplaceContractData ?? offChainMarketplaceContractData;
+  target.set(key, mergeFeeConfig(target.get(key) ?? emptyFeeConfig(), patch));
 };
 
 /**
@@ -131,8 +190,8 @@ export const getOffChainMarketplaceContractData = async (
   block: Block,
   marketplaceAddress: string
 ): Promise<{ feeCollector: string; feeRate: bigint; royaltiesRate: bigint }> => {
-  const data = getOrCreateOffChainMarketplaceContractData(marketplaceAddress);
-  let { feeCollector, feeRate, royaltiesRate } = data;
+  let { feeCollector, feeRate, royaltiesRate } =
+    viewOffChainMarketplaceContractData(marketplaceAddress);
   if (
     feeCollector === undefined ||
     feeRate === undefined ||
@@ -141,15 +200,27 @@ export const getOffChainMarketplaceContractData = async (
     console.log(
       `INFO: Fetching marketplace contract data for ${marketplaceAddress} for first time`
     );
-    const c = new OffChainMarketplaceContract(ctx, block, marketplaceAddress);
-    [feeCollector, feeRate, royaltiesRate] = await Promise.all([
+    // Read the block BEFORE the trade's. State at N is post-block, so a fee update later in N would
+    // leak into a trade earlier in it. Updates earlier in N have already been replayed into the
+    // fields that are present, so the missing ones are exactly those nothing changed before this trade.
+    const c = new OffChainMarketplaceContract(
+      ctx,
+      { ...block, height: block.height - 1 },
+      marketplaceAddress
+    );
+    const [chainFeeCollector, chainFeeRate, chainRoyaltiesRate] = await Promise.all([
       c.feeCollector(),
       c.feeRate(),
       c.royaltiesRate(),
     ]);
-    data.feeCollector = feeCollector;
-    data.feeRate = feeRate;
-    data.royaltiesRate = royaltiesRate;
+    feeCollector ??= chainFeeCollector;
+    feeRate ??= chainFeeRate;
+    royaltiesRate ??= chainRoyaltiesRate;
+    writeOffChainMarketplaceContractData(marketplaceAddress, {
+      feeCollector,
+      feeRate,
+      royaltiesRate,
+    });
   }
   return { feeCollector, feeRate, royaltiesRate };
 };
@@ -158,21 +229,21 @@ export const setOffChainMarketplaceFeeCollector = (
   marketplaceAddress: string,
   value: string
 ) => {
-  getOrCreateOffChainMarketplaceContractData(marketplaceAddress).feeCollector = value;
+  writeOffChainMarketplaceContractData(marketplaceAddress, { feeCollector: value });
 };
 
 export const setOffChainMarketplaceFeeRate = (
   marketplaceAddress: string,
   value: bigint
 ) => {
-  getOrCreateOffChainMarketplaceContractData(marketplaceAddress).feeRate = value;
+  writeOffChainMarketplaceContractData(marketplaceAddress, { feeRate: value });
 };
 
 export const setOffChainMarketplaceRoyaltiesRate = (
   marketplaceAddress: string,
   value: bigint
 ) => {
-  getOrCreateOffChainMarketplaceContractData(marketplaceAddress).royaltiesRate = value;
+  writeOffChainMarketplaceContractData(marketplaceAddress, { royaltiesRate: value });
 };
 
 // CollectionStore contract creation blocks

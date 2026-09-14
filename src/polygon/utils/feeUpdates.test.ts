@@ -2,7 +2,7 @@ import * as OffChainMarketplaceABI from "../abi/DecentralandMarketplacePolygon";
 import type { Block, BlockData, Context } from "../processor";
 import {
   getOffChainMarketplaceContractData,
-  offChainMarketplaceContractData,
+  resetOffChainMarketplaceContractData,
   setOffChainMarketplaceFeeCollector,
   setOffChainMarketplaceFeeRate,
   setOffChainMarketplaceRoyaltiesRate,
@@ -25,7 +25,8 @@ const V3 = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
 const CALLER = "0x0e659a116e161d8e502f9036babda51334f2667e";
 const COMMITTEE_MULTISIG = "0xb08e3e7cc815213304d884c88ca476ebc50eaab2";
 const FEE_COLLECTOR_SAFE = "0x184e4d9a26add0af1eafc145550e890a421f16d7";
-const { FeeCollectorUpdated, FeeRateUpdated, Traded } = OffChainMarketplaceABI.events;
+const { FeeCollectorUpdated, FeeRateUpdated, RoyaltiesRateUpdated, Traded } =
+  OffChainMarketplaceABI.events;
 
 const pad = (hex: string) => "0x" + hex.replace(/^0x/, "").padStart(64, "0");
 const word = (n: bigint) => n.toString(16).padStart(64, "0");
@@ -43,6 +44,13 @@ const feeLog = (address: string, topics: string[], data: string, logIndex: numbe
 const feeRateUpdatedLog = (address: string, rate: bigint, logIndex: number) =>
   feeLog(address, [FeeRateUpdated.topic, pad(CALLER)], "0x" + word(rate), logIndex);
 
+const royaltiesRateUpdatedLog = (address: string, rate: bigint, logIndex: number) =>
+  feeLog(address, [RoyaltiesRateUpdated.topic, pad(CALLER)], "0x" + word(rate), logIndex);
+
+// Both parameters are indexed, so the collector travels in the topics and the data is empty.
+const feeCollectorUpdatedLog = (address: string, collector: string, logIndex: number) =>
+  feeLog(address, [FeeCollectorUpdated.topic, pad(CALLER), pad(collector)], "0x", logIndex);
+
 // A populated cache entry is returned without touching the chain, so no client is needed.
 const ctx = {} as unknown as Context;
 const block = { header: { height: 93_600_000 } } as unknown as BlockData;
@@ -56,7 +64,7 @@ const seed = (address: string, feeCollector: string) => {
 
 describe("applyFeeUpdate", () => {
   beforeEach(() => {
-    offChainMarketplaceContractData.clear();
+    resetOffChainMarketplaceContractData();
     seed(V2, COMMITTEE_MULTISIG);
     seed(V3, FEE_COLLECTOR_SAFE);
   });
@@ -85,6 +93,48 @@ describe("applyFeeUpdate", () => {
 
     it("should leave the other marketplace's rate untouched", () => {
       expect(otherMarketplace.feeRate).toBe(BigInt(25000));
+    });
+  });
+
+  describe("when a fee-collector update is applied", () => {
+    let v3: Awaited<ReturnType<typeof getOffChainMarketplaceContractData>>;
+    let v2: Awaited<ReturnType<typeof getOffChainMarketplaceContractData>>;
+
+    beforeEach(async () => {
+      const queued = queueFeeUpdate(
+        FeeCollectorUpdated.topic,
+        feeCollectorUpdatedLog(V3, COMMITTEE_MULTISIG, 5),
+        block
+      );
+      applyFeeUpdate(queued!.topic, queued!.log, queued!.event);
+      v3 = await getOffChainMarketplaceContractData(ctx, header, V3);
+      v2 = await getOffChainMarketplaceContractData(ctx, header, V2);
+    });
+
+    it("should move that marketplace's collector and nothing else", () => {
+      expect([v3.feeCollector.toLowerCase(), v3.feeRate, v2.feeCollector]).toEqual([
+        COMMITTEE_MULTISIG,
+        BigInt(25000),
+        COMMITTEE_MULTISIG,
+      ]);
+    });
+  });
+
+  describe("when a royalties-rate update is applied", () => {
+    let v3: Awaited<ReturnType<typeof getOffChainMarketplaceContractData>>;
+
+    beforeEach(async () => {
+      const queued = queueFeeUpdate(
+        RoyaltiesRateUpdated.topic,
+        royaltiesRateUpdatedLog(V3, BigInt(10000), 6),
+        block
+      );
+      applyFeeUpdate(queued!.topic, queued!.log, queued!.event);
+      v3 = await getOffChainMarketplaceContractData(ctx, header, V3);
+    });
+
+    it("should change the royalties rate and leave the fee rate alone", () => {
+      expect([v3.royaltiesRate, v3.feeRate]).toEqual([BigInt(10000), BigInt(25000)]);
     });
   });
 
@@ -128,9 +178,11 @@ describe("queueFeeUpdate", () => {
     let queued: QueuedFeeUpdate | null;
 
     beforeEach(() => {
-      // Both parameters are indexed, so the collector travels in the topics and the data is empty.
-      const log = feeLog(V3, [FeeCollectorUpdated.topic, pad(CALLER), pad(FEE_COLLECTOR_SAFE)], "0x", 3);
-      queued = queueFeeUpdate(FeeCollectorUpdated.topic, log, block);
+      queued = queueFeeUpdate(
+        FeeCollectorUpdated.topic,
+        feeCollectorUpdatedLog(V3, FEE_COLLECTOR_SAFE, 3),
+        block
+      );
     });
 
     it("should decode the new collector", () => {
