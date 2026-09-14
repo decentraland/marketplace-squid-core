@@ -29,7 +29,6 @@ import { ORDER_SALE_TYPE, trackSale } from "../modules/analytics";
 import { Context } from "../processor";
 import { buildCountFromOrder } from "../modules/count";
 import { TradedEventArgs } from "../../abi/DecentralandMarketplaceEthereum";
-import { getAddresses } from "../../common/utils/addresses";
 import {
   getTradeEventData,
   getTradeEventType,
@@ -178,6 +177,7 @@ export async function handleOrderSuccessful(
 export async function handleTraded(
   ctx: Context,
   event: TradedEventArgs,
+  marketplaceAddress: string,
   block: BlockData,
   txHash: string,
   nfts: Map<string, NFT>,
@@ -225,11 +225,11 @@ export async function handleTraded(
 
   nft.updatedAt = timestamp;
 
-  const addresses = getAddresses(Network.ETHEREUM);
+  // The emitting contract, not a fixed version: each marketplace keeps its own fee rate.
   const offChainMarketplaceContract = new OffChainMarketplaceABI.Contract(
     ctx,
     block.header,
-    addresses.OffChainMarketplace
+    marketplaceAddress
   );
 
   await trackSale(

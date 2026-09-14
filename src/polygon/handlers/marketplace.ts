@@ -243,6 +243,7 @@ export function handleOrderCancelled(
 export async function handleTraded(
   ctx: Context,
   event: TradedEventArgs,
+  marketplaceAddress: string,
   block: BlockData,
   transaction: Transaction & { input: string },
   storedData: PolygonStoredData,
@@ -262,7 +263,7 @@ export async function handleTraded(
   // Read once and kept current from the contract's own *Updated events — see
   // getOffChainMarketplaceContractData. This used to be three sequential eth_calls PER Traded event.
   const { feeCollector, feeRate, royaltiesRate } =
-    await getOffChainMarketplaceContractData(ctx, block.header);
+    await getOffChainMarketplaceContractData(ctx, block.header, marketplaceAddress);
   const feesCollector = feeCollector;
 
   // NFT

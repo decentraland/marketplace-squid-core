@@ -90,15 +90,29 @@ export type OffChainMarketplaceContractData = {
   royaltiesRate: bigint | undefined;
 };
 
-export let offChainMarketplaceContractData: OffChainMarketplaceContractData = {
-  feeCollector: undefined,
-  feeRate: undefined,
-  royaltiesRate: undefined,
+// Keyed by the emitting marketplace, lowercased: every deployed version keeps its own configuration.
+export const offChainMarketplaceContractData = new Map<
+  string,
+  OffChainMarketplaceContractData
+>();
+
+const getOrCreateOffChainMarketplaceContractData = (
+  marketplaceAddress: string
+): OffChainMarketplaceContractData => {
+  const key = marketplaceAddress.toLowerCase();
+  let data = offChainMarketplaceContractData.get(key);
+  if (!data) {
+    data = { feeCollector: undefined, feeRate: undefined, royaltiesRate: undefined };
+    offChainMarketplaceContractData.set(key, data);
+  }
+  return data;
 };
 
 /**
- * Fee configuration of the V3 marketplace, read from the chain ONCE and kept current from the
- * contract's own FeeCollectorUpdated / FeeRateUpdated / RoyaltiesRateUpdated events.
+ * Fee configuration of an off-chain marketplace, read from the chain ONCE per contract and kept
+ * current from that contract's own FeeCollectorUpdated / FeeRateUpdated / RoyaltiesRateUpdated
+ * events. Resolved by the emitting address because the versions differ: V3 on Polygon collects into
+ * a different Safe than V1/V2, so one shared copy would attribute its fees to the wrong collector.
  *
  * handleTraded used to read all three per Traded event — three sequential eth_calls for values
  * that change roughly never. Against the RPC client's rate limit that was ~0.3s per trade, and
@@ -114,39 +128,51 @@ export let offChainMarketplaceContractData: OffChainMarketplaceContractData = {
  */
 export const getOffChainMarketplaceContractData = async (
   ctx: Context,
-  block: Block
+  block: Block,
+  marketplaceAddress: string
 ): Promise<{ feeCollector: string; feeRate: bigint; royaltiesRate: bigint }> => {
-  let { feeCollector, feeRate, royaltiesRate } = offChainMarketplaceContractData;
+  const data = getOrCreateOffChainMarketplaceContractData(marketplaceAddress);
+  let { feeCollector, feeRate, royaltiesRate } = data;
   if (
     feeCollector === undefined ||
     feeRate === undefined ||
     royaltiesRate === undefined
   ) {
-    console.log("INFO: Fetching marketplace v3 contract data for first time");
-    const addresses = getAddresses(Network.MATIC);
-    const c = new OffChainMarketplaceContract(ctx, block, addresses.OffChainMarketplace);
+    console.log(
+      `INFO: Fetching marketplace contract data for ${marketplaceAddress} for first time`
+    );
+    const c = new OffChainMarketplaceContract(ctx, block, marketplaceAddress);
     [feeCollector, feeRate, royaltiesRate] = await Promise.all([
       c.feeCollector(),
       c.feeRate(),
       c.royaltiesRate(),
     ]);
-    offChainMarketplaceContractData.feeCollector = feeCollector;
-    offChainMarketplaceContractData.feeRate = feeRate;
-    offChainMarketplaceContractData.royaltiesRate = royaltiesRate;
+    data.feeCollector = feeCollector;
+    data.feeRate = feeRate;
+    data.royaltiesRate = royaltiesRate;
   }
   return { feeCollector, feeRate, royaltiesRate };
 };
 
-export const setOffChainMarketplaceFeeCollector = (value: string) => {
-  offChainMarketplaceContractData.feeCollector = value;
+export const setOffChainMarketplaceFeeCollector = (
+  marketplaceAddress: string,
+  value: string
+) => {
+  getOrCreateOffChainMarketplaceContractData(marketplaceAddress).feeCollector = value;
 };
 
-export const setOffChainMarketplaceFeeRate = (value: bigint) => {
-  offChainMarketplaceContractData.feeRate = value;
+export const setOffChainMarketplaceFeeRate = (
+  marketplaceAddress: string,
+  value: bigint
+) => {
+  getOrCreateOffChainMarketplaceContractData(marketplaceAddress).feeRate = value;
 };
 
-export const setOffChainMarketplaceRoyaltiesRate = (value: bigint) => {
-  offChainMarketplaceContractData.royaltiesRate = value;
+export const setOffChainMarketplaceRoyaltiesRate = (
+  marketplaceAddress: string,
+  value: bigint
+) => {
+  getOrCreateOffChainMarketplaceContractData(marketplaceAddress).royaltiesRate = value;
 };
 
 // CollectionStore contract creation blocks

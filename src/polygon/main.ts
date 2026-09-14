@@ -1000,7 +1000,8 @@ run(dataSource, db, async (simpleCtx) => {
             });
             break;
           }
-          // Keep the cached V3 fee configuration current. Same shape as the V1/V2 cases below,
+          // Keep the emitting marketplace's cached fee configuration current. Same shape as the
+          // legacy Marketplace/Bid cases below,
           // and it inherits their one caveat: these are applied while events are accumulated,
           // whereas Traded is handled later in the batch. So a fee change and trades in the SAME
           // batch are applied out of order — trades before the change would see the new value.
@@ -1010,18 +1011,21 @@ run(dataSource, db, async (simpleCtx) => {
           // applied as-of, which is a bigger change than this one.
           case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic: {
             setOffChainMarketplaceFeeCollector(
+              log.address,
               OffChainMarketplaceABI.events.FeeCollectorUpdated.decode(log)._feeCollector
             );
             break;
           }
           case OffChainMarketplaceABI.events.FeeRateUpdated.topic: {
             setOffChainMarketplaceFeeRate(
+              log.address,
               OffChainMarketplaceABI.events.FeeRateUpdated.decode(log)._feeRate
             );
             break;
           }
           case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic: {
             setOffChainMarketplaceRoyaltiesRate(
+              log.address,
               OffChainMarketplaceABI.events.RoyaltiesRateUpdated.decode(log)._royaltiesRate
             );
             break;
@@ -1487,6 +1491,7 @@ run(dataSource, db, async (simpleCtx) => {
           await handleTraded(
             ctx,
             event as OffChainMarketplaceABI.TradedEventArgs,
+            log.address,
             block,
             transaction,
             storedData,

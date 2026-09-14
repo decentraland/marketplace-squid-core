@@ -22,10 +22,17 @@ import * as CreditsManagerABI from "./abi/CreditsManager";
 import * as SpokeABI from "../abi/Spoke";
 import { getBlockRange } from "../config";
 import { getAddresses } from "../common/utils/addresses";
+import { Null } from "../common/utils/constants";
 import { loadCollections } from "./utils/loaders";
 import { startBlockByNetwork } from "./addresses/startBlocks";
 
 const addresses = getAddresses(Network.MATIC);
+// Every deployed off-chain marketplace version. Never empty: an empty address filter means ANY address.
+const offChainMarketplaceAddresses = [
+  addresses.OffChainMarketplace,
+  addresses.OffChainMarketplaceV2,
+  addresses.OffChainMarketplaceV3,
+].filter((address) => address !== Null);
 const chainId = process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET;
 
 // SQD Network Portal dataset (replaces the deprecated v2 archive gateway). See portalSource for
@@ -204,10 +211,11 @@ export const dataSource = new DataSourceBuilder()
   })
   // Fee configuration of the V3 marketplace. handleTraded needs these values on every trade and
   // used to fetch them over RPC each time; ingesting the changes instead keeps the cached copy
-  // current for free. Only the OffChainMarketplace address: that is the contract handleTraded reads.
+  // current for free. Every deployed version: each keeps its own configuration, and handleTraded
+  // resolves it by the emitting contract.
   .addLog({
     where: {
-      address: [addresses.OffChainMarketplace],
+      address: offChainMarketplaceAddresses,
       topic0: [
         OffChainMarketplace.events.FeeCollectorUpdated.topic,
         OffChainMarketplace.events.FeeRateUpdated.topic,

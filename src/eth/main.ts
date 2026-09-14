@@ -848,6 +848,7 @@ run(dataSource, db, async (simpleCtx) => {
         await handleTraded(
           ctx,
           event as OffChainMarketplaceABI.TradedEventArgs,
+          log.address,
           block,
           log.transactionHash,
           nfts,
