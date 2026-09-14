@@ -85,7 +85,7 @@ import {
   setStoreFee,
   setStoreFeeOwner,
   beginOffChainMarketplaceFeeBatch,
-  commitOffChainMarketplaceFeeBatch,
+  endOffChainMarketplaceFeeBatch,
 } from "./state";
 import { getStoredData } from "./store";
 import { PolygonStoredData } from "./types";
@@ -343,8 +343,8 @@ const db = new TypeormDatabase({
 const prometheus = new PrometheusServer();
 prometheus.setPort(Number(process.env.POLYGON_PROMETHEUS_PORT || 3001));
 run(dataSource, db, async (simpleCtx) => {
-  // Fee writes stage here until the batch completes; a retry must not see a failed batch's values.
-  beginOffChainMarketplaceFeeBatch();
+  // Fee writes stage per batch; the previous batch's are promoted only if this one starts past it.
+  beginOffChainMarketplaceFeeBatch(simpleCtx.blocks[0]?.header.height ?? -1);
   // The batch-processor base context is bare {store, blocks, isHead}; augment the
   // blocks (restores block.logs / log.transaction back-refs) and attach `_chain`
   // (RPC for contract reads) and a logger, so the rest of the handler and the ABI
@@ -527,6 +527,9 @@ run(dataSource, db, async (simpleCtx) => {
       console.log(
         "INFO: Batch contains important data: ",
         isThereImportantDataInBatch
+      );
+      endOffChainMarketplaceFeeBatch(
+        ctx.blocks[ctx.blocks.length - 1].header.height
       );
       return;
     }
@@ -1905,7 +1908,9 @@ run(dataSource, db, async (simpleCtx) => {
 `);
     }
 
-    commitOffChainMarketplaceFeeBatch();
+    endOffChainMarketplaceFeeBatch(
+      ctx.blocks[ctx.blocks.length - 1].header.height
+    );
     ctx.log.info(
       `Batch ${metrics.blockRange} saved: nfts=${nfts.size}, items=${items.size}, sales=${sales.size}, mints=${mints.size}, transfers=${transfers.size}`
     );

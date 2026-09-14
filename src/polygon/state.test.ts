@@ -1,7 +1,7 @@
 import type { Block, Context } from "./processor";
 import {
   beginOffChainMarketplaceFeeBatch,
-  commitOffChainMarketplaceFeeBatch,
+  endOffChainMarketplaceFeeBatch,
   getOffChainMarketplaceContractData,
   resetOffChainMarketplaceContractData,
   setOffChainMarketplaceFeeCollector,
@@ -125,7 +125,7 @@ describe("getOffChainMarketplaceContractData", () => {
     let data: FeeConfig;
 
     beforeEach(async () => {
-      beginOffChainMarketplaceFeeBatch();
+      beginOffChainMarketplaceFeeBatch(N);
       setOffChainMarketplaceFeeRate(V3, BigInt(40000));
       ContractMock.mockImplementation(() => ({
         feeCollector: async () => FEE_COLLECTOR_SAFE,
@@ -144,16 +144,53 @@ describe("getOffChainMarketplaceContractData", () => {
     });
   });
 
-  describe("when a batch stages a fee update and then fails before completing", () => {
+  describe("when a batch with a trade before a fee update is retried after failing", () => {
+    let firstAttempt: FeeConfig;
+    let retry: FeeConfig;
+
+    beforeEach(async () => {
+      seed(V3, FEE_COLLECTOR_SAFE);
+      // Batch 100-200: the trade is handled, then the update, then the batch ends — but the store never
+      // commits, so the processor hands the same range back.
+      beginOffChainMarketplaceFeeBatch(100);
+      firstAttempt = await getOffChainMarketplaceContractData(ctx, blockAt(100), V3);
+      setOffChainMarketplaceFeeRate(V3, BigInt(40000));
+      endOffChainMarketplaceFeeBatch(200);
+      beginOffChainMarketplaceFeeBatch(100);
+      retry = await getOffChainMarketplaceContractData(ctx, blockAt(100), V3);
+    });
+
+    it("should give the trade the same rate on the retry as on the first attempt", () => {
+      expect([firstAttempt.feeRate, retry.feeRate]).toEqual([BigInt(25000), BigInt(25000)]);
+    });
+  });
+
+  describe("when a batch stages a fee update and the next batch starts past it", () => {
     let data: FeeConfig;
 
     beforeEach(async () => {
       seed(V3, FEE_COLLECTOR_SAFE);
-      beginOffChainMarketplaceFeeBatch();
+      beginOffChainMarketplaceFeeBatch(100);
       setOffChainMarketplaceFeeRate(V3, BigInt(40000));
-      // The retry opens a new batch without the failed one having committed.
-      beginOffChainMarketplaceFeeBatch();
-      data = await getOffChainMarketplaceContractData(ctx, blockAt(N), V3);
+      endOffChainMarketplaceFeeBatch(200);
+      beginOffChainMarketplaceFeeBatch(201);
+      data = await getOffChainMarketplaceContractData(ctx, blockAt(201), V3);
+    });
+
+    it("should promote the value, since the processor only moves past a batch it committed", () => {
+      expect(data.feeRate).toBe(BigInt(40000));
+    });
+  });
+
+  describe("when a batch throws before ending and the same range is retried", () => {
+    let data: FeeConfig;
+
+    beforeEach(async () => {
+      seed(V3, FEE_COLLECTOR_SAFE);
+      beginOffChainMarketplaceFeeBatch(100);
+      setOffChainMarketplaceFeeRate(V3, BigInt(40000));
+      beginOffChainMarketplaceFeeBatch(100);
+      data = await getOffChainMarketplaceContractData(ctx, blockAt(100), V3);
     });
 
     it("should not let the retry see the failed batch's value", () => {
@@ -161,20 +198,27 @@ describe("getOffChainMarketplaceContractData", () => {
     });
   });
 
-  describe("when a batch stages a fee update and completes", () => {
+  describe("when a batch starts at or before a block whose writes were already promoted", () => {
     let data: FeeConfig;
 
     beforeEach(async () => {
       seed(V3, FEE_COLLECTOR_SAFE);
-      beginOffChainMarketplaceFeeBatch();
+      beginOffChainMarketplaceFeeBatch(100);
       setOffChainMarketplaceFeeRate(V3, BigInt(40000));
-      commitOffChainMarketplaceFeeBatch();
-      beginOffChainMarketplaceFeeBatch();
-      data = await getOffChainMarketplaceContractData(ctx, blockAt(N), V3);
+      endOffChainMarketplaceFeeBatch(200);
+      beginOffChainMarketplaceFeeBatch(201);
+      // A rollback: the chain the promoted update came from is gone.
+      beginOffChainMarketplaceFeeBatch(150);
+      ContractMock.mockImplementation(() => ({
+        feeCollector: async () => FEE_COLLECTOR_SAFE,
+        feeRate: async () => BigInt(25000),
+        royaltiesRate: async () => BigInt(25000),
+      }));
+      data = await getOffChainMarketplaceContractData(ctx, blockAt(150), V3);
     });
 
-    it("should carry the value into the next batch", () => {
-      expect(data.feeRate).toBe(BigInt(40000));
+    it("should drop the cache and re-seed from the chain rather than trust orphaned values", () => {
+      expect([data.feeRate, ContractMock.mock.calls.length]).toEqual([BigInt(25000), 1]);
     });
   });
 });

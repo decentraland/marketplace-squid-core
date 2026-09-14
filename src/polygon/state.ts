@@ -101,12 +101,22 @@ export const offChainMarketplaceContractData = new Map<
  * Fee writes made while a batch runs. A batch that throws is retried with the same process memory,
  * so writing straight to the committed map would let the retry's early trades read fee values from
  * later in that same batch. Everything a batch learns — replayed updates and cold-cache seeds alike —
- * lands here and is folded into the committed map only once the batch has completed.
+ * lands here, and is promoted only once the processor is seen to have moved past the batch: the one
+ * signal available inside the handler that the batch's transaction committed.
  */
 let stagedOffChainMarketplaceContractData: Map<
   string,
   OffChainMarketplaceContractData
 > | null = null;
+
+/** The last ended batch's writes, held until the next batch proves that one committed. */
+let pendingOffChainMarketplaceContractData: {
+  toBlock: number;
+  writes: Map<string, OffChainMarketplaceContractData>;
+} | null = null;
+
+/** The highest block whose writes were promoted. A batch starting at or below it is a rollback. */
+let promotedToBlock = -1;
 
 const emptyFeeConfig = (): OffChainMarketplaceContractData => ({
   feeCollector: undefined,
@@ -123,27 +133,54 @@ const mergeFeeConfig = (
   royaltiesRate: patch.royaltiesRate ?? base.royaltiesRate,
 });
 
-/** Opens a batch's staging area, dropping whatever a failed previous batch left behind. */
-export const beginOffChainMarketplaceFeeBatch = () => {
-  stagedOffChainMarketplaceContractData = new Map();
-};
-
-/** Folds the batch's staged writes into the committed cache. Call once the batch has completed. */
-export const commitOffChainMarketplaceFeeBatch = () => {
-  if (!stagedOffChainMarketplaceContractData) return;
-  for (const [key, patch] of stagedOffChainMarketplaceContractData) {
+const promoteFeeWrites = (writes: Map<string, OffChainMarketplaceContractData>) => {
+  for (const [key, patch] of writes) {
     offChainMarketplaceContractData.set(
       key,
       mergeFeeConfig(offChainMarketplaceContractData.get(key) ?? emptyFeeConfig(), patch)
     );
   }
+};
+
+/**
+ * Opens a batch's staging area, deciding the previous batch's fate from where this one starts.
+ *
+ * The processor only advances past a batch it has committed, so a start after the previous batch's
+ * end promotes that batch's writes. A start at or before that end is a retry of it, and its writes are
+ * dropped. A start at or before an already promoted block is a rollback into promoted history, so
+ * the whole cache is dropped and trades re-seed from the chain, which is always safe: a seed only
+ * costs a read, whereas a promoted value from an orphaned block would be wrong.
+ */
+export const beginOffChainMarketplaceFeeBatch = (fromBlock: number) => {
+  const pending = pendingOffChainMarketplaceContractData;
+  pendingOffChainMarketplaceContractData = null;
+  if (fromBlock <= promotedToBlock) {
+    offChainMarketplaceContractData.clear();
+    promotedToBlock = -1;
+  } else if (pending && fromBlock > pending.toBlock) {
+    promoteFeeWrites(pending.writes);
+    promotedToBlock = pending.toBlock;
+  }
+  stagedOffChainMarketplaceContractData = new Map();
+};
+
+/** Ends the batch, holding its writes until the next batch shows the processor moved past `toBlock`. */
+export const endOffChainMarketplaceFeeBatch = (toBlock: number) => {
+  if (stagedOffChainMarketplaceContractData) {
+    pendingOffChainMarketplaceContractData = {
+      toBlock,
+      writes: stagedOffChainMarketplaceContractData,
+    };
+  }
   stagedOffChainMarketplaceContractData = null;
 };
 
-/** Empties the committed cache and any open batch. For tests. */
+/** Empties the committed cache and any open or pending batch. For tests. */
 export const resetOffChainMarketplaceContractData = () => {
   offChainMarketplaceContractData.clear();
   stagedOffChainMarketplaceContractData = null;
+  pendingOffChainMarketplaceContractData = null;
+  promotedToBlock = -1;
 };
 
 /** What the batch currently knows about a marketplace: committed values under its staged writes. */
