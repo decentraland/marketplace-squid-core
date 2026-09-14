@@ -1,6 +1,3 @@
-import assert from "node:assert";
-import { beforeEach, describe, it } from "node:test";
-
 import type { Block, Context } from "./processor";
 import {
   getOffChainMarketplaceContractData,
@@ -44,8 +41,8 @@ describe("getOffChainMarketplaceContractData", () => {
         getOffChainMarketplaceContractData(ctx, block, V1),
         getOffChainMarketplaceContractData(ctx, block, V3),
       ]);
-      assert.equal(v1.feeCollector, COMMITTEE_MULTISIG);
-      assert.equal(v3.feeCollector, FEE_COLLECTOR_SAFE);
+      expect(v1.feeCollector).toBe(COMMITTEE_MULTISIG);
+      expect(v3.feeCollector).toBe(FEE_COLLECTOR_SAFE);
     });
 
     describe("and the emitting address is spelled in a different case", () => {
@@ -55,7 +52,7 @@ describe("getOffChainMarketplaceContractData", () => {
           block,
           V3.toUpperCase().replace("0X", "0x")
         );
-        assert.equal(data.feeCollector, FEE_COLLECTOR_SAFE);
+        expect(data.feeCollector).toBe(FEE_COLLECTOR_SAFE);
       });
     });
 
@@ -69,8 +66,8 @@ describe("getOffChainMarketplaceContractData", () => {
           getOffChainMarketplaceContractData(ctx, block, V1),
           getOffChainMarketplaceContractData(ctx, block, V3),
         ]);
-        assert.equal(v3.feeRate, BigInt(40000));
-        assert.equal(v1.feeRate, BigInt(25000));
+        expect(v3.feeRate).toBe(BigInt(40000));
+        expect(v1.feeRate).toBe(BigInt(25000));
       });
     });
   });
