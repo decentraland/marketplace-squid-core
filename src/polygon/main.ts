@@ -29,6 +29,11 @@ import * as CommitteeABI from "./abi/Committee";
 import * as RaritiesABI from "./abi/Rarity";
 import * as OffChainMarketplaceABI from "./abi/DecentralandMarketplacePolygon";
 import * as OffChainMarketplaceV3ABI from "./abi/DecentralandMarketplacePolygonV3";
+import {
+  applyFeeUpdate,
+  FeeUpdateEventArgs,
+  queueFeeUpdate,
+} from "./utils/feeUpdates";
 import * as ERC721BidABI from "./abi/ERC721Bid";
 import * as CollectionStoreABI from "./abi/CollectionStore";
 import * as CollectionManagerABI from "./abi/CollectionManager";
@@ -77,9 +82,6 @@ import {
   getStoreContractData,
   setBidOwnerCutPerMillion,
   setMarketplaceOwnerCutPerMillion,
-  setOffChainMarketplaceFeeCollector,
-  setOffChainMarketplaceFeeRate,
-  setOffChainMarketplaceRoyaltiesRate,
   setStoreFee,
   setStoreFeeOwner,
 } from "./state";
@@ -1000,33 +1002,14 @@ run(dataSource, db, async (simpleCtx) => {
             });
             break;
           }
-          // Fee updates are queued, not applied: the second pass replays them in log order, so a
-          // trade reads the configuration as of its own position rather than the batch's last one.
-          case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic: {
-            events.push({
-              topic,
-              event: OffChainMarketplaceABI.events.FeeCollectorUpdated.decode(log),
-              block,
-              log,
-            });
-            break;
-          }
-          case OffChainMarketplaceABI.events.FeeRateUpdated.topic: {
-            events.push({
-              topic,
-              event: OffChainMarketplaceABI.events.FeeRateUpdated.decode(log),
-              block,
-              log,
-            });
-            break;
-          }
+          case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic:
+          case OffChainMarketplaceABI.events.FeeRateUpdated.topic:
           case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic: {
-            events.push({
-              topic,
-              event: OffChainMarketplaceABI.events.RoyaltiesRateUpdated.decode(log),
-              block,
-              log,
-            });
+            // Queued, not applied: pass two replays fee updates in log order (utils/feeUpdates).
+            const queued = queueFeeUpdate(topic, log, block);
+            if (queued) {
+              events.push(queued);
+            }
             break;
           }
           case MarketplaceV2ABI.events.ChangedFeesCollectorCutPerMillion.topic:
@@ -1482,22 +1465,9 @@ run(dataSource, db, async (simpleCtx) => {
           );
           break;
         case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic:
-          setOffChainMarketplaceFeeCollector(
-            log.address,
-            (event as OffChainMarketplaceABI.FeeCollectorUpdatedEventArgs)._feeCollector
-          );
-          break;
         case OffChainMarketplaceABI.events.FeeRateUpdated.topic:
-          setOffChainMarketplaceFeeRate(
-            log.address,
-            (event as OffChainMarketplaceABI.FeeRateUpdatedEventArgs)._feeRate
-          );
-          break;
         case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic:
-          setOffChainMarketplaceRoyaltiesRate(
-            log.address,
-            (event as OffChainMarketplaceABI.RoyaltiesRateUpdatedEventArgs)._royaltiesRate
-          );
+          applyFeeUpdate(topic, log, event as FeeUpdateEventArgs);
           break;
         case OffChainMarketplaceABI.events.Traded.topic:
         case OffChainMarketplaceV3ABI.events.Traded.topic: {
