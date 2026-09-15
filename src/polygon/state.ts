@@ -2,6 +2,7 @@ import { ChainId, Network } from "@dcl/schemas";
 import { PolygonInMemoryState } from "./types";
 import { Sale } from "../model";
 import { getAddresses } from "../common/utils/addresses";
+import { createFeeCache } from "../common/utils/feeCache";
 import { Contract as MarketplaceContract } from "./abi/Marketplace";
 import { Contract as MarketplaceV2Contract } from "./abi/MarketplaceV2";
 import { Contract as OffChainMarketplaceContract } from "./abi/DecentralandMarketplacePolygon";
@@ -90,63 +91,94 @@ export type OffChainMarketplaceContractData = {
   royaltiesRate: bigint | undefined;
 };
 
-export let offChainMarketplaceContractData: OffChainMarketplaceContractData = {
-  feeCollector: undefined,
-  feeRate: undefined,
-  royaltiesRate: undefined,
-};
-
 /**
- * Fee configuration of the V3 marketplace, read from the chain ONCE and kept current from the
- * contract's own FeeCollectorUpdated / FeeRateUpdated / RoyaltiesRateUpdated events.
- *
- * handleTraded used to read all three per Traded event — three sequential eth_calls for values
- * that change roughly never. Against the RPC client's rate limit that was ~0.3s per trade, and
- * because the calls were not attributed to any rpcTime bucket it showed up as unexplained
- * "event loop" time: 548s of a 671s batch on a prod backfill through 2025 blocks.
- *
- * Unlike the other getters here there is no start-block guard, and none is needed: this is only
- * ever called from handleTraded, and a Traded event cannot exist before the contract does.
- *
- * Deliberately NOT wrapped in try/catch, unlike its siblings. These values land in the Sale's
- * money columns (feesCollectorCut, royaltiesCut), so a read failure must fail the batch and be
- * retried — swallowing it would either skip the sale or record it with empty fees.
+ * Fee configuration per emitting marketplace, lowercased: every deployed version keeps its own, and
+ * V3 on Polygon collects into a different Safe than V1/V2. The three-tier staging behind this is
+ * shared with the Ethereum processor — see common/utils/feeCache.
  */
+const offChainMarketplaceFeeCache = createFeeCache<OffChainMarketplaceContractData>(
+  () => ({ feeCollector: undefined, feeRate: undefined, royaltiesRate: undefined }),
+  (base, patch) => ({
+    feeCollector: patch.feeCollector ?? base.feeCollector,
+    feeRate: patch.feeRate ?? base.feeRate,
+    royaltiesRate: patch.royaltiesRate ?? base.royaltiesRate,
+  })
+);
+
+export const beginOffChainMarketplaceFeeBatch = (fromBlock: number) =>
+  offChainMarketplaceFeeCache.begin(fromBlock);
+
+export const endOffChainMarketplaceFeeBatch = (toBlock: number) =>
+  offChainMarketplaceFeeCache.end(toBlock);
+
+/** Empties the committed cache and any open or pending batch. For tests. */
+export const resetOffChainMarketplaceContractData = () =>
+  offChainMarketplaceFeeCache.reset();
+
+const writeOffChainMarketplaceContractData = (
+  marketplaceAddress: string,
+  patch: Partial<OffChainMarketplaceContractData>
+) => offChainMarketplaceFeeCache.write(marketplaceAddress, patch);
+
 export const getOffChainMarketplaceContractData = async (
   ctx: Context,
-  block: Block
+  block: Block,
+  marketplaceAddress: string
 ): Promise<{ feeCollector: string; feeRate: bigint; royaltiesRate: bigint }> => {
-  let { feeCollector, feeRate, royaltiesRate } = offChainMarketplaceContractData;
+  let { feeCollector, feeRate, royaltiesRate } =
+    offChainMarketplaceFeeCache.view(marketplaceAddress);
   if (
     feeCollector === undefined ||
     feeRate === undefined ||
     royaltiesRate === undefined
   ) {
-    console.log("INFO: Fetching marketplace v3 contract data for first time");
-    const addresses = getAddresses(Network.MATIC);
-    const c = new OffChainMarketplaceContract(ctx, block, addresses.OffChainMarketplace);
-    [feeCollector, feeRate, royaltiesRate] = await Promise.all([
+    console.log(
+      `INFO: Fetching marketplace contract data for ${marketplaceAddress} for first time`
+    );
+    // Read the block BEFORE the trade's. State at N is post-block, so a fee update later in N would
+    // leak into a trade earlier in it. Updates earlier in N have already been replayed into the
+    // fields that are present, so the missing ones are exactly those nothing changed before this trade.
+    const c = new OffChainMarketplaceContract(
+      ctx,
+      { ...block, height: block.height - 1 },
+      marketplaceAddress
+    );
+    const [chainFeeCollector, chainFeeRate, chainRoyaltiesRate] = await Promise.all([
       c.feeCollector(),
       c.feeRate(),
       c.royaltiesRate(),
     ]);
-    offChainMarketplaceContractData.feeCollector = feeCollector;
-    offChainMarketplaceContractData.feeRate = feeRate;
-    offChainMarketplaceContractData.royaltiesRate = royaltiesRate;
+    feeCollector ??= chainFeeCollector;
+    feeRate ??= chainFeeRate;
+    royaltiesRate ??= chainRoyaltiesRate;
+    writeOffChainMarketplaceContractData(marketplaceAddress, {
+      feeCollector,
+      feeRate,
+      royaltiesRate,
+    });
   }
   return { feeCollector, feeRate, royaltiesRate };
 };
 
-export const setOffChainMarketplaceFeeCollector = (value: string) => {
-  offChainMarketplaceContractData.feeCollector = value;
+export const setOffChainMarketplaceFeeCollector = (
+  marketplaceAddress: string,
+  value: string
+) => {
+  writeOffChainMarketplaceContractData(marketplaceAddress, { feeCollector: value });
 };
 
-export const setOffChainMarketplaceFeeRate = (value: bigint) => {
-  offChainMarketplaceContractData.feeRate = value;
+export const setOffChainMarketplaceFeeRate = (
+  marketplaceAddress: string,
+  value: bigint
+) => {
+  writeOffChainMarketplaceContractData(marketplaceAddress, { feeRate: value });
 };
 
-export const setOffChainMarketplaceRoyaltiesRate = (value: bigint) => {
-  offChainMarketplaceContractData.royaltiesRate = value;
+export const setOffChainMarketplaceRoyaltiesRate = (
+  marketplaceAddress: string,
+  value: bigint
+) => {
+  writeOffChainMarketplaceContractData(marketplaceAddress, { royaltiesRate: value });
 };
 
 // CollectionStore contract creation blocks

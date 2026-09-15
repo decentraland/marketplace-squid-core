@@ -29,6 +29,11 @@ import * as CommitteeABI from "./abi/Committee";
 import * as RaritiesABI from "./abi/Rarity";
 import * as OffChainMarketplaceABI from "./abi/DecentralandMarketplacePolygon";
 import * as OffChainMarketplaceV3ABI from "./abi/DecentralandMarketplacePolygonV3";
+import {
+  applyFeeUpdate,
+  FeeUpdateEventArgs,
+  queueFeeUpdate,
+} from "./utils/feeUpdates";
 import * as ERC721BidABI from "./abi/ERC721Bid";
 import * as CollectionStoreABI from "./abi/CollectionStore";
 import * as CollectionManagerABI from "./abi/CollectionManager";
@@ -77,11 +82,10 @@ import {
   getStoreContractData,
   setBidOwnerCutPerMillion,
   setMarketplaceOwnerCutPerMillion,
-  setOffChainMarketplaceFeeCollector,
-  setOffChainMarketplaceFeeRate,
-  setOffChainMarketplaceRoyaltiesRate,
   setStoreFee,
   setStoreFeeOwner,
+  beginOffChainMarketplaceFeeBatch,
+  endOffChainMarketplaceFeeBatch,
 } from "./state";
 import { getStoredData } from "./store";
 import { PolygonStoredData } from "./types";
@@ -339,6 +343,8 @@ const db = new TypeormDatabase({
 const prometheus = new PrometheusServer();
 prometheus.setPort(Number(process.env.POLYGON_PROMETHEUS_PORT || 3001));
 run(dataSource, db, async (simpleCtx) => {
+  // Fee writes stage per batch; the previous batch's are promoted only if this one starts past it.
+  beginOffChainMarketplaceFeeBatch(simpleCtx.blocks[0].header.height);
   // The batch-processor base context is bare {store, blocks, isHead}; augment the
   // blocks (restores block.logs / log.transaction back-refs) and attach `_chain`
   // (RPC for contract reads) and a logger, so the rest of the handler and the ABI
@@ -521,6 +527,9 @@ run(dataSource, db, async (simpleCtx) => {
       console.log(
         "INFO: Batch contains important data: ",
         isThereImportantDataInBatch
+      );
+      endOffChainMarketplaceFeeBatch(
+        ctx.blocks[ctx.blocks.length - 1].header.height
       );
       return;
     }
@@ -1000,30 +1009,17 @@ run(dataSource, db, async (simpleCtx) => {
             });
             break;
           }
-          // Keep the cached V3 fee configuration current. Same shape as the V1/V2 cases below,
-          // and it inherits their one caveat: these are applied while events are accumulated,
-          // whereas Traded is handled later in the batch. So a fee change and trades in the SAME
-          // batch are applied out of order — trades before the change would see the new value.
-          // At head a batch is seconds wide so this cannot happen; during a backfill a batch can
-          // span ~1M blocks, and it would only matter around the handful of blocks where fees
-          // actually changed. Resolving per-trade needs the change recorded with its block and
-          // applied as-of, which is a bigger change than this one.
-          case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic: {
-            setOffChainMarketplaceFeeCollector(
-              OffChainMarketplaceABI.events.FeeCollectorUpdated.decode(log)._feeCollector
-            );
-            break;
-          }
-          case OffChainMarketplaceABI.events.FeeRateUpdated.topic: {
-            setOffChainMarketplaceFeeRate(
-              OffChainMarketplaceABI.events.FeeRateUpdated.decode(log)._feeRate
-            );
-            break;
-          }
+          case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic:
+          case OffChainMarketplaceABI.events.FeeRateUpdated.topic:
           case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic: {
-            setOffChainMarketplaceRoyaltiesRate(
-              OffChainMarketplaceABI.events.RoyaltiesRateUpdated.decode(log)._royaltiesRate
-            );
+            // Queued, not applied: pass two replays fee updates in log order (utils/feeUpdates).
+            const queued = queueFeeUpdate(topic, log, block);
+            if (!queued) {
+              // Only reachable by adding a topic here and not to queueFeeUpdate. Loud, because the
+              // quiet version of this is a fee change that never reaches the cache.
+              throw new Error(`Fee update topic ${topic} is not handled by queueFeeUpdate`);
+            }
+            events.push(queued);
             break;
           }
           case MarketplaceV2ABI.events.ChangedFeesCollectorCutPerMillion.topic:
@@ -1478,6 +1474,11 @@ run(dataSource, db, async (simpleCtx) => {
             storedData
           );
           break;
+        case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic:
+        case OffChainMarketplaceABI.events.FeeRateUpdated.topic:
+        case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic:
+          applyFeeUpdate(topic, log, event as FeeUpdateEventArgs);
+          break;
         case OffChainMarketplaceABI.events.Traded.topic:
         case OffChainMarketplaceV3ABI.events.Traded.topic: {
           if (!storeContractData || !transaction) {
@@ -1487,6 +1488,7 @@ run(dataSource, db, async (simpleCtx) => {
           await handleTraded(
             ctx,
             event as OffChainMarketplaceABI.TradedEventArgs,
+            log.address,
             block,
             transaction,
             storedData,
@@ -1909,6 +1911,9 @@ run(dataSource, db, async (simpleCtx) => {
 `);
     }
 
+    endOffChainMarketplaceFeeBatch(
+      ctx.blocks[ctx.blocks.length - 1].header.height
+    );
     ctx.log.info(
       `Batch ${metrics.blockRange} saved: nfts=${nfts.size}, items=${items.size}, sales=${sales.size}, mints=${mints.size}, transfers=${transfers.size}`
     );

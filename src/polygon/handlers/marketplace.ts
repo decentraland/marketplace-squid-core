@@ -12,8 +12,6 @@ import {
   updateNFTOrderProperties,
 } from "../../common/utils";
 import * as CollectionV2ABI from "../abi/CollectionV2";
-import * as OffChainMarketplaceABI from "../abi/DecentralandMarketplacePolygon";
-import * as OffChainMarketplaceV3ABI from "../abi/DecentralandMarketplacePolygonV3";
 import {
   Category,
   Count,
@@ -243,6 +241,7 @@ export function handleOrderCancelled(
 export async function handleTraded(
   ctx: Context,
   event: TradedEventArgs,
+  marketplaceAddress: string,
   block: BlockData,
   transaction: Transaction & { input: string },
   storedData: PolygonStoredData,
@@ -262,7 +261,7 @@ export async function handleTraded(
   // Read once and kept current from the contract's own *Updated events — see
   // getOffChainMarketplaceContractData. This used to be three sequential eth_calls PER Traded event.
   const { feeCollector, feeRate, royaltiesRate } =
-    await getOffChainMarketplaceContractData(ctx, block.header);
+    await getOffChainMarketplaceContractData(ctx, block.header, marketplaceAddress);
   const feesCollector = feeCollector;
 
   // NFT
@@ -351,22 +350,18 @@ export async function handleTraded(
     const tokenId = issueDecoded._tokenId;
     const issuedId = issueDecoded._issuedId;
 
-    const logFromTraded = block.logs.find(
-      (log) =>
-        log.transactionIndex === transaction.transactionIndex &&
-        (log.topics[0] === OffChainMarketplaceABI.events.Traded.topic ||
-          log.topics[0] === OffChainMarketplaceV3ABI.events.Traded.topic)
-    );
-
-    if (!logFromTraded || !logFromTraded.address) {
-      console.log("ERROR: logFromTraded not found");
-    } else if (
-      logFromTraded.address !== addresses.OffChainMarketplace &&
-      logFromTraded.address !== addresses.OffChainMarketplaceV2 &&
-      logFromTraded.address !== addresses.OffChainMarketplaceV3
+    // The marketplace that emitted THIS trade, which is the minter the collection authorised. Taken
+    // from the event being handled rather than searched for: a transaction routinely carries several
+    // Traded logs, and a find() over them returns the first one, which is a different marketplace as
+    // soon as an aggregator settles against two versions in one transaction.
+    const emittingMarketplace = marketplaceAddress.toLowerCase();
+    if (
+      emittingMarketplace !== addresses.OffChainMarketplace &&
+      emittingMarketplace !== addresses.OffChainMarketplaceV2 &&
+      emittingMarketplace !== addresses.OffChainMarketplaceV3
     ) {
       console.log(
-        "ERROR: logFromTraded is not the marketplace v3, v3 v2 or v3 v3"
+        `ERROR: Traded event came from ${emittingMarketplace}, which is not an off-chain marketplace this network knows`
       );
     }
 
@@ -376,7 +371,7 @@ export async function handleTraded(
         tradeType === TradeType.Order
           ? event._trade.sent[0].beneficiary
           : event._trade.received[0].beneficiary,
-      _caller: logFromTraded?.address || "",
+      _caller: emittingMarketplace,
       _itemId: itemId,
       _tokenId: tokenId,
       _issuedId: issuedId,

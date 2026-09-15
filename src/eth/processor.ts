@@ -7,6 +7,7 @@ import { RpcClient } from "@subsquid/rpc-client";
 import { createLogger, Logger } from "@subsquid/logger";
 import { Store } from "@subsquid/typeorm-store";
 import { getAddresses } from "../common/utils/addresses";
+import { Null } from "../common/utils/constants";
 import { getBlockRange } from "../config";
 import * as landRegistryAbi from "../abi/LANDRegistry";
 import * as estateRegistryAbi from "../abi/EstateRegistry";
@@ -20,6 +21,16 @@ import * as OffChainMarketplaceV3 from "../abi/DecentralandMarketplaceEthereumV3
 import * as SpokeABI from "../abi/Spoke";
 
 const addresses = getAddresses(Network.ETHEREUM);
+const offChainMarketplaceAddresses = [
+  addresses.OffChainMarketplace,
+  addresses.OffChainMarketplaceV2,
+  addresses.OffChainMarketplaceV3,
+].filter((address) => address !== Null);
+if (offChainMarketplaceAddresses.length === 0) {
+  throw new Error(
+    "No off-chain marketplace address is configured for this network; the fee subscription would match every contract"
+  );
+}
 const chainId = process.env.ETHEREUM_CHAIN_ID || ChainId.ETHEREUM_MAINNET;
 
 // SQD Network Portal dataset (replaces the deprecated v2 archive gateway). See portalSource for
@@ -177,6 +188,19 @@ export const dataSource = new DataSourceBuilder()
       topic0: [OffChainMarketplaceV3.events.Traded.topic],
     },
     include: { transaction: true },
+  })
+  // Fee configuration of every deployed marketplace version. handleTraded needs a rate on every trade
+  // and used to fetch it over RPC each time; ingesting the changes keeps the cached copy current for
+  // free. Each version keeps its own rate, resolved by the emitting contract, so all are ingested.
+  // Never empty: an empty `address` filter matches ANY address, which for a signature this generic
+  // would be a chain-wide firehose.
+  .addLog({
+    where: {
+      address: offChainMarketplaceAddresses,
+      // Only the rate: a sale here records no collector, so FeeCollectorUpdated would be stream
+      // volume on every batch for a value nothing reads.
+      topic0: [OffChainMarketplace.events.FeeRateUpdated.topic],
+    },
   })
   .addLog({
     where: {

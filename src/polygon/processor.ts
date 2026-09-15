@@ -22,10 +22,25 @@ import * as CreditsManagerABI from "./abi/CreditsManager";
 import * as SpokeABI from "../abi/Spoke";
 import { getBlockRange } from "../config";
 import { getAddresses } from "../common/utils/addresses";
+import { Null } from "../common/utils/constants";
 import { loadCollections } from "./utils/loaders";
 import { startBlockByNetwork } from "./addresses/startBlocks";
 
 const addresses = getAddresses(Network.MATIC);
+// Every off-chain marketplace version deployed on this network. An empty `address` filter means ANY
+// address, so a network with none of them would turn the fee subscription into a chain-wide firehose
+// for three generic signatures. That cannot happen on either supported network, which is why this
+// throws rather than falling back: it is a wiring mistake, not a runtime condition.
+const offChainMarketplaceAddresses = [
+  addresses.OffChainMarketplace,
+  addresses.OffChainMarketplaceV2,
+  addresses.OffChainMarketplaceV3,
+].filter((address) => address !== Null);
+if (offChainMarketplaceAddresses.length === 0) {
+  throw new Error(
+    "No off-chain marketplace address is configured for this network; the fee subscription would match every contract"
+  );
+}
 const chainId = process.env.POLYGON_CHAIN_ID || ChainId.MATIC_MAINNET;
 
 // SQD Network Portal dataset (replaces the deprecated v2 archive gateway). See portalSource for
@@ -202,12 +217,13 @@ export const dataSource = new DataSourceBuilder()
     },
     include: { transaction: true },
   })
-  // Fee configuration of the V3 marketplace. handleTraded needs these values on every trade and
-  // used to fetch them over RPC each time; ingesting the changes instead keeps the cached copy
-  // current for free. Only the OffChainMarketplace address: that is the contract handleTraded reads.
+  // Fee configuration of every deployed marketplace version. handleTraded needs these values on every
+  // trade and used to fetch them over RPC each time; ingesting the changes instead keeps the cached
+  // copy current for free. Each version keeps its own configuration, and handleTraded resolves it by
+  // the emitting contract, so all of them have to be ingested and not just the newest.
   .addLog({
     where: {
-      address: [addresses.OffChainMarketplace],
+      address: offChainMarketplaceAddresses,
       topic0: [
         OffChainMarketplace.events.FeeCollectorUpdated.topic,
         OffChainMarketplace.events.FeeRateUpdated.topic,

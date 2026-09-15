@@ -11,6 +11,7 @@ ADD schema.graphql .
 ADD squid.yaml .
 RUN npm ci
 ADD tsconfig.json .
+ADD tsconfig.build.json .
 ADD src src
 ADD db db
 ADD assets assets

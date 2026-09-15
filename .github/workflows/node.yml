@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@master
-      - name: Use Node.js 18.x
+      - name: Use Node.js 24.x
         uses: actions/setup-node@v3
         with:
           node-version: 24
@@ -16,3 +16,5 @@ jobs:
         run: npm install
       - name: build
         run: npm run build
+      - name: test
+        run: npm test
