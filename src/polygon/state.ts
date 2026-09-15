@@ -2,6 +2,7 @@ import { ChainId, Network } from "@dcl/schemas";
 import { PolygonInMemoryState } from "./types";
 import { Sale } from "../model";
 import { getAddresses } from "../common/utils/addresses";
+import { createFeeCache } from "../common/utils/feeCache";
 import { Contract as MarketplaceContract } from "./abi/Marketplace";
 import { Contract as MarketplaceV2Contract } from "./abi/MarketplaceV2";
 import { Contract as OffChainMarketplaceContract } from "./abi/DecentralandMarketplacePolygon";
@@ -90,168 +91,42 @@ export type OffChainMarketplaceContractData = {
   royaltiesRate: bigint | undefined;
 };
 
-// Keyed by the emitting marketplace, lowercased: every deployed version keeps its own configuration.
-// Only batches that complete reach this map; see the staged copy below.
-export const offChainMarketplaceContractData = new Map<
-  string,
-  OffChainMarketplaceContractData
->();
-
 /**
- * Fee writes made while a batch runs. A batch that throws is retried with the same process memory,
- * so writing straight to the committed map would let the retry's early trades read fee values from
- * later in that same batch. Everything a batch learns — replayed updates and cold-cache seeds alike —
- * lands here, and is promoted only once the processor is seen to have moved past the batch: the one
- * signal available inside the handler that the batch's transaction committed.
+ * Fee configuration per emitting marketplace, lowercased: every deployed version keeps its own, and
+ * V3 on Polygon collects into a different Safe than V1/V2. The three-tier staging behind this is
+ * shared with the Ethereum processor — see common/utils/feeCache.
  */
-let stagedOffChainMarketplaceContractData: Map<
-  string,
-  OffChainMarketplaceContractData
-> | null = null;
+const offChainMarketplaceFeeCache = createFeeCache<OffChainMarketplaceContractData>(
+  () => ({ feeCollector: undefined, feeRate: undefined, royaltiesRate: undefined }),
+  (base, patch) => ({
+    feeCollector: patch.feeCollector ?? base.feeCollector,
+    feeRate: patch.feeRate ?? base.feeRate,
+    royaltiesRate: patch.royaltiesRate ?? base.royaltiesRate,
+  })
+);
 
-/**
- * The last ended batch's writes, held until the next batch proves that one committed.
- *
- * `fromBlock` is kept as well as `toBlock` so a re-delivery can be told apart: one that starts at or
- * before the batch did replays every update in it, while one that starts inside it does not.
- */
-let pendingOffChainMarketplaceContractData: {
-  fromBlock: number;
-  toBlock: number;
-  writes: Map<string, OffChainMarketplaceContractData>;
-} | null = null;
+export const beginOffChainMarketplaceFeeBatch = (fromBlock: number) =>
+  offChainMarketplaceFeeCache.begin(fromBlock);
 
-/** The highest block whose writes were promoted. A batch starting at or below it is a rollback. */
-let promotedToBlock = -1;
-
-/** Where the open batch started, carried into the pending slot when it ends. */
-let openedAtBlock = -1;
-
-const emptyFeeConfig = (): OffChainMarketplaceContractData => ({
-  feeCollector: undefined,
-  feeRate: undefined,
-  royaltiesRate: undefined,
-});
-
-const mergeFeeConfig = (
-  base: OffChainMarketplaceContractData,
-  patch: Partial<OffChainMarketplaceContractData>
-): OffChainMarketplaceContractData => ({
-  feeCollector: patch.feeCollector ?? base.feeCollector,
-  feeRate: patch.feeRate ?? base.feeRate,
-  royaltiesRate: patch.royaltiesRate ?? base.royaltiesRate,
-});
-
-const promoteFeeWrites = (writes: Map<string, OffChainMarketplaceContractData>) => {
-  for (const [key, patch] of writes) {
-    offChainMarketplaceContractData.set(
-      key,
-      mergeFeeConfig(offChainMarketplaceContractData.get(key) ?? emptyFeeConfig(), patch)
-    );
-  }
-};
-
-/**
- * Opens a batch's staging area, deciding the previous batch's fate from where this one starts.
- *
- * The processor only advances past a batch it has committed, so a start after the previous batch's
- * end promotes that batch's writes. A start at or before that end is a re-delivery of it, and its
- * writes are dropped. A start at or before an already promoted block is a rollback into promoted
- * history, so the whole cache is dropped.
- *
- * Dropping is only safe while the re-delivery replays what was dropped. One that starts at or before
- * the batch did covers all of it, so forgetting the writes is enough. One that starts INSIDE it never
- * replays the updates before its own start, and an entry with all three fields set never reads the
- * chain again, so forgetting there would leave a stale value in place for good — those entries are
- * invalidated instead, which costs a read and re-seeds them.
- */
-export const beginOffChainMarketplaceFeeBatch = (fromBlock: number) => {
-  const pending = pendingOffChainMarketplaceContractData;
-  pendingOffChainMarketplaceContractData = null;
-  if (fromBlock <= promotedToBlock) {
-    offChainMarketplaceContractData.clear();
-    promotedToBlock = -1;
-  } else if (pending) {
-    if (fromBlock > pending.toBlock) {
-      promoteFeeWrites(pending.writes);
-      promotedToBlock = pending.toBlock;
-    } else if (fromBlock > pending.fromBlock) {
-      for (const marketplaceAddress of pending.writes.keys()) {
-        offChainMarketplaceContractData.delete(marketplaceAddress);
-      }
-    }
-  }
-  openedAtBlock = fromBlock;
-  stagedOffChainMarketplaceContractData = new Map();
-};
-
-/** Ends the batch, holding its writes until the next batch shows the processor moved past `toBlock`. */
-export const endOffChainMarketplaceFeeBatch = (toBlock: number) => {
-  if (stagedOffChainMarketplaceContractData) {
-    pendingOffChainMarketplaceContractData = {
-      fromBlock: openedAtBlock,
-      toBlock,
-      writes: stagedOffChainMarketplaceContractData,
-    };
-  }
-  stagedOffChainMarketplaceContractData = null;
-};
+export const endOffChainMarketplaceFeeBatch = (toBlock: number) =>
+  offChainMarketplaceFeeCache.end(toBlock);
 
 /** Empties the committed cache and any open or pending batch. For tests. */
-export const resetOffChainMarketplaceContractData = () => {
-  offChainMarketplaceContractData.clear();
-  stagedOffChainMarketplaceContractData = null;
-  pendingOffChainMarketplaceContractData = null;
-  promotedToBlock = -1;
-  openedAtBlock = -1;
-};
-
-/** What the batch currently knows about a marketplace: committed values under its staged writes. */
-const viewOffChainMarketplaceContractData = (
-  marketplaceAddress: string
-): OffChainMarketplaceContractData => {
-  const key = marketplaceAddress.toLowerCase();
-  return mergeFeeConfig(
-    offChainMarketplaceContractData.get(key) ?? emptyFeeConfig(),
-    stagedOffChainMarketplaceContractData?.get(key) ?? emptyFeeConfig()
-  );
-};
+export const resetOffChainMarketplaceContractData = () =>
+  offChainMarketplaceFeeCache.reset();
 
 const writeOffChainMarketplaceContractData = (
   marketplaceAddress: string,
   patch: Partial<OffChainMarketplaceContractData>
-) => {
-  const key = marketplaceAddress.toLowerCase();
-  // Outside a batch (tests, tooling) writes go straight to the committed cache.
-  const target = stagedOffChainMarketplaceContractData ?? offChainMarketplaceContractData;
-  target.set(key, mergeFeeConfig(target.get(key) ?? emptyFeeConfig(), patch));
-};
+) => offChainMarketplaceFeeCache.write(marketplaceAddress, patch);
 
-/**
- * Fee configuration of an off-chain marketplace, read from the chain ONCE per contract and kept
- * current from that contract's own FeeCollectorUpdated / FeeRateUpdated / RoyaltiesRateUpdated
- * events. Resolved by the emitting address because the versions differ: V3 on Polygon collects into
- * a different Safe than V1/V2, so one shared copy would attribute its fees to the wrong collector.
- *
- * handleTraded used to read all three per Traded event — three sequential eth_calls for values
- * that change roughly never. Against the RPC client's rate limit that was ~0.3s per trade, and
- * because the calls were not attributed to any rpcTime bucket it showed up as unexplained
- * "event loop" time: 548s of a 671s batch on a prod backfill through 2025 blocks.
- *
- * Unlike the other getters here there is no start-block guard, and none is needed: this is only
- * ever called from handleTraded, and a Traded event cannot exist before the contract does.
- *
- * Deliberately NOT wrapped in try/catch, unlike its siblings. These values land in the Sale's
- * money columns (feesCollectorCut, royaltiesCut), so a read failure must fail the batch and be
- * retried — swallowing it would either skip the sale or record it with empty fees.
- */
 export const getOffChainMarketplaceContractData = async (
   ctx: Context,
   block: Block,
   marketplaceAddress: string
 ): Promise<{ feeCollector: string; feeRate: bigint; royaltiesRate: bigint }> => {
   let { feeCollector, feeRate, royaltiesRate } =
-    viewOffChainMarketplaceContractData(marketplaceAddress);
+    offChainMarketplaceFeeCache.view(marketplaceAddress);
   if (
     feeCollector === undefined ||
     feeRate === undefined ||

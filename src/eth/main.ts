@@ -51,6 +51,9 @@ import {
   getMarketplaceOwnerCutPerMillion,
   setMarketplaceOwnerCutPerMillion,
   setBidOwnerCutPerMillion,
+  beginOffChainMarketplaceFeeBatch,
+  endOffChainMarketplaceFeeBatch,
+  setOffChainMarketplaceFeeRate,
 } from "./state";
 import { handleNameBought, handleNameRegistered } from "./handlers/ens";
 import {
@@ -129,6 +132,8 @@ const db = new TypeormDatabase({
 const prometheus = new PrometheusServer();
 prometheus.setPort(Number(process.env.ETH_PROMETHEUS_PORT || 3000));
 run(dataSource, db, async (simpleCtx) => {
+  // Fee writes stage per batch; the previous batch's are promoted only if this one starts past it.
+  beginOffChainMarketplaceFeeBatch(simpleCtx.blocks[0].header.height);
   // The batch-processor base context is bare {store, blocks, isHead}; augment the
   // blocks (restores block.logs / log.transaction back-refs) and attach `_chain`
   // (RPC for contract reads) and a logger, so the rest of the handler and the ABI
@@ -643,6 +648,17 @@ run(dataSource, db, async (simpleCtx) => {
             });
             break;
           }
+          // Queued, not applied: pass two replays these in log order, so a trade reads the rate as
+          // of its own position rather than the batch's last one.
+          case OffChainMarketplaceABI.events.FeeRateUpdated.topic: {
+            markteplaceEvents.push({
+              topic,
+              event: OffChainMarketplaceABI.events.FeeRateUpdated.decode(log),
+              block,
+              log,
+            });
+            break;
+          }
           case OffChainMarketplaceABI.events.Traded.topic:
           case OffChainMarketplaceV3ABI.events.Traded.topic: {
             // V3 carries an extra indexed _tradeDigest, so it decodes with its own module.
@@ -840,6 +856,11 @@ run(dataSource, db, async (simpleCtx) => {
           orders,
           nfts,
           counts
+        );
+      } else if (topic === OffChainMarketplaceABI.events.FeeRateUpdated.topic) {
+        setOffChainMarketplaceFeeRate(
+          log.address,
+          (event as OffChainMarketplaceABI.FeeRateUpdatedEventArgs)._feeRate
         );
       } else if (
         topic === OffChainMarketplaceABI.events.Traded.topic ||
@@ -1126,6 +1147,11 @@ run(dataSource, db, async (simpleCtx) => {
     } catch (error) {
       ctx.log.error(`error: ${error}`);
     }
+    // Outside the try, so it mirrors begin on every path. This handler swallows its errors, so the
+    // processor advances past the batch either way and the writes belong in the pending slot.
+    endOffChainMarketplaceFeeBatch(
+      ctx.blocks[ctx.blocks.length - 1].header.height
+    );
   },
   { prometheus }
 );

@@ -5,7 +5,7 @@ import {
   OrderCreatedEventArgs,
   OrderSuccessfulEventArgs,
 } from "../../abi/Marketplace";
-import * as OffChainMarketplaceABI from "../../abi/DecentralandMarketplaceEthereum";
+import { getOffChainMarketplaceFeeRate } from "../state";
 import { getCategory } from "../../common/utils/category";
 import {
   cancelActiveOrder,
@@ -225,12 +225,6 @@ export async function handleTraded(
 
   nft.updatedAt = timestamp;
 
-  // The emitting contract, not a fixed version: each marketplace keeps its own fee rate.
-  const offChainMarketplaceContract = new OffChainMarketplaceABI.Contract(
-    ctx,
-    block.header,
-    marketplaceAddress
-  );
 
   await trackSale(
     ctx,
@@ -240,7 +234,7 @@ export async function handleTraded(
     seller,
     nft.id,
     price,
-    await offChainMarketplaceContract.feeRate(),
+    await getOffChainMarketplaceFeeRate(ctx, block, marketplaceAddress),
     BigInt(block.header.timestamp / 1000), // @TODO fix this, has the have the event hash not the block
     txHash,
     nfts,
