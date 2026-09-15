@@ -496,7 +496,6 @@ run(dataSource, db, async (simpleCtx) => {
           log.address === addresses.CollectionFactory ||
           log.address === addresses.CollectionFactoryV3 ||
           log.address === addresses.BidV2 ||
-          log.address === addresses.ERC721Bid ||
           log.address === addresses.Marketplace ||
           log.address === addresses.MarketplaceV2 ||
           log.address === addresses.OldCommittee ||
