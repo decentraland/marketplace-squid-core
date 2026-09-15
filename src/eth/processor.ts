@@ -197,10 +197,9 @@ export const dataSource = new DataSourceBuilder()
   .addLog({
     where: {
       address: offChainMarketplaceAddresses,
-      topic0: [
-        OffChainMarketplace.events.FeeCollectorUpdated.topic,
-        OffChainMarketplace.events.FeeRateUpdated.topic,
-      ],
+      // Only the rate: a sale here records no collector, so FeeCollectorUpdated would be stream
+      // volume on every batch for a value nothing reads.
+      topic0: [OffChainMarketplace.events.FeeRateUpdated.topic],
     },
   })
   .addLog({

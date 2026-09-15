@@ -11,6 +11,11 @@
  * the failed attempt learned. When the batch ends its writes are parked rather than committed, because
  * a handler has no way to know the transaction committed. The next batch's start block is the evidence:
  * the processor only advances past a range it has committed.
+ *
+ * That evidence is weaker for a handler that catches its own errors, since it advances whether or not
+ * the batch did what it meant to. Promotion stays safe there because every value held came from the
+ * chain or from an ingested log rather than from the batch's own work, but do not lean on the premise
+ * for anything else.
  */
 export type FeeCache<T extends object> = {
   /** Opens a batch's staging area, deciding the previous batch's fate from where this one starts. */

@@ -58,9 +58,10 @@ export const addEventToStateIdsBasedOnCategory = (
 export type OffChainMarketplaceContractData = { feeRate: bigint | undefined };
 
 /**
- * Fee rate per emitting marketplace, lowercased. Ethereum's marketplace has no royalties and no
- * collector to record, so a rate is all a sale needs from it. Staging is shared with the Polygon
- * processor — see common/utils/feeCache.
+ * Fee rate per emitting marketplace, lowercased. A rate is all a sale needs from it here: the
+ * contract has no royalties at all (`royaltiesRate()` reverts), and while it does report a
+ * `feeCollector()`, the Ethereum trackSale never fills the Sale's collector column the way Polygon's
+ * does. Staging is shared with the Polygon processor — see common/utils/feeCache.
  */
 const offChainMarketplaceFeeCache = createFeeCache<OffChainMarketplaceContractData>(
   () => ({ feeRate: undefined }),
@@ -91,8 +92,11 @@ export const setOffChainMarketplaceFeeRate = (
  * N would otherwise price a trade earlier in it. Updates earlier in N have already been replayed by
  * the time the trade is handled, so a rate that is still missing is one nothing changed before it.
  *
- * Deliberately not wrapped in try/catch: the value lands in a Sale's money column, so a failed read
- * must fail the batch and be retried rather than record a sale with no fee.
+ * Deliberately not wrapped in try/catch: the value lands in a Sale's money column, so recording a
+ * sale with no fee is worse than not recording it. Note what a throw costs HERE though, because it is
+ * not what it costs on Polygon: this handler wraps its whole body in a catch that logs, so the throw
+ * is swallowed, the store commits what it had, and the processor moves on. The rest of the batch is
+ * skipped and never replayed. Making it propagate is a change to the handler, not to this read.
  */
 export const getOffChainMarketplaceFeeRate = async (
   ctx: Context,
