@@ -344,7 +344,7 @@ const prometheus = new PrometheusServer();
 prometheus.setPort(Number(process.env.POLYGON_PROMETHEUS_PORT || 3001));
 run(dataSource, db, async (simpleCtx) => {
   // Fee writes stage per batch; the previous batch's are promoted only if this one starts past it.
-  beginOffChainMarketplaceFeeBatch(simpleCtx.blocks[0]?.header.height ?? -1);
+  beginOffChainMarketplaceFeeBatch(simpleCtx.blocks[0].header.height);
   // The batch-processor base context is bare {store, blocks, isHead}; augment the
   // blocks (restores block.logs / log.transaction back-refs) and attach `_chain`
   // (RPC for contract reads) and a logger, so the rest of the handler and the ABI
@@ -1014,9 +1014,12 @@ run(dataSource, db, async (simpleCtx) => {
           case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic: {
             // Queued, not applied: pass two replays fee updates in log order (utils/feeUpdates).
             const queued = queueFeeUpdate(topic, log, block);
-            if (queued) {
-              events.push(queued);
+            if (!queued) {
+              // Only reachable by adding a topic here and not to queueFeeUpdate. Loud, because the
+              // quiet version of this is a fee change that never reaches the cache.
+              throw new Error(`Fee update topic ${topic} is not handled by queueFeeUpdate`);
             }
+            events.push(queued);
             break;
           }
           case MarketplaceV2ABI.events.ChangedFeesCollectorCutPerMillion.topic:

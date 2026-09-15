@@ -96,6 +96,28 @@ describe("applyFeeUpdate", () => {
     });
   });
 
+  describe("and the update is emitted by the older marketplace instead", () => {
+    let v2: Awaited<ReturnType<typeof getOffChainMarketplaceContractData>>;
+    let v3: Awaited<ReturnType<typeof getOffChainMarketplaceContractData>>;
+
+    beforeEach(async () => {
+      const queued = queueFeeUpdate(FeeRateUpdated.topic, feeRateUpdatedLog(V2, BigInt(40000), 2), block);
+      applyFeeUpdate(queued!.topic, queued!.log, queued!.event);
+      v2 = await getOffChainMarketplaceContractData(ctx, header, V2);
+      v3 = await getOffChainMarketplaceContractData(ctx, header, V3);
+    });
+
+    // The emitting log decides which marketplace moves. Resolving it any other way would let one
+    // version's fee change rewrite another's, which is what this whole path exists to prevent.
+    it("should move the emitting marketplace", () => {
+      expect(v2.feeRate).toBe(BigInt(40000));
+    });
+
+    it("should leave the newest marketplace on its own rate", () => {
+      expect(v3.feeRate).toBe(BigInt(25000));
+    });
+  });
+
   describe("when a fee-collector update is applied", () => {
     let v3: Awaited<ReturnType<typeof getOffChainMarketplaceContractData>>;
     let v2: Awaited<ReturnType<typeof getOffChainMarketplaceContractData>>;
@@ -152,6 +174,23 @@ describe("applyFeeUpdate", () => {
 });
 
 describe("queueFeeUpdate", () => {
+  describe("when a fee-rate update is queued but not yet replayed", () => {
+    let afterQueueing: Awaited<ReturnType<typeof getOffChainMarketplaceContractData>>;
+
+    beforeEach(async () => {
+      resetOffChainMarketplaceContractData();
+      seed(V3, FEE_COLLECTOR_SAFE);
+      queueFeeUpdate(FeeRateUpdated.topic, feeRateUpdatedLog(V3, BigInt(40000), 2), block);
+      afterQueueing = await getOffChainMarketplaceContractData(ctx, header, V3);
+    });
+
+    // Pass one sees every log before pass two handles any trade, so queueing that also applied would
+    // give every trade in the batch the batch's last configuration.
+    it("should leave the cache on the rate that was in force", () => {
+      expect(afterQueueing.feeRate).toBe(BigInt(25000));
+    });
+  });
+
   describe("when the log is a fee-rate update", () => {
     let log: QueuedFeeUpdate["log"];
     let queued: QueuedFeeUpdate | null;

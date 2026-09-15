@@ -109,14 +109,23 @@ let stagedOffChainMarketplaceContractData: Map<
   OffChainMarketplaceContractData
 > | null = null;
 
-/** The last ended batch's writes, held until the next batch proves that one committed. */
+/**
+ * The last ended batch's writes, held until the next batch proves that one committed.
+ *
+ * `fromBlock` is kept as well as `toBlock` so a re-delivery can be told apart: one that starts at or
+ * before the batch did replays every update in it, while one that starts inside it does not.
+ */
 let pendingOffChainMarketplaceContractData: {
+  fromBlock: number;
   toBlock: number;
   writes: Map<string, OffChainMarketplaceContractData>;
 } | null = null;
 
 /** The highest block whose writes were promoted. A batch starting at or below it is a rollback. */
 let promotedToBlock = -1;
+
+/** Where the open batch started, carried into the pending slot when it ends. */
+let openedAtBlock = -1;
 
 const emptyFeeConfig = (): OffChainMarketplaceContractData => ({
   feeCollector: undefined,
@@ -146,10 +155,15 @@ const promoteFeeWrites = (writes: Map<string, OffChainMarketplaceContractData>) 
  * Opens a batch's staging area, deciding the previous batch's fate from where this one starts.
  *
  * The processor only advances past a batch it has committed, so a start after the previous batch's
- * end promotes that batch's writes. A start at or before that end is a retry of it, and its writes are
- * dropped. A start at or before an already promoted block is a rollback into promoted history, so
- * the whole cache is dropped and trades re-seed from the chain, which is always safe: a seed only
- * costs a read, whereas a promoted value from an orphaned block would be wrong.
+ * end promotes that batch's writes. A start at or before that end is a re-delivery of it, and its
+ * writes are dropped. A start at or before an already promoted block is a rollback into promoted
+ * history, so the whole cache is dropped.
+ *
+ * Dropping is only safe while the re-delivery replays what was dropped. One that starts at or before
+ * the batch did covers all of it, so forgetting the writes is enough. One that starts INSIDE it never
+ * replays the updates before its own start, and an entry with all three fields set never reads the
+ * chain again, so forgetting there would leave a stale value in place for good — those entries are
+ * invalidated instead, which costs a read and re-seeds them.
  */
 export const beginOffChainMarketplaceFeeBatch = (fromBlock: number) => {
   const pending = pendingOffChainMarketplaceContractData;
@@ -157,10 +171,17 @@ export const beginOffChainMarketplaceFeeBatch = (fromBlock: number) => {
   if (fromBlock <= promotedToBlock) {
     offChainMarketplaceContractData.clear();
     promotedToBlock = -1;
-  } else if (pending && fromBlock > pending.toBlock) {
-    promoteFeeWrites(pending.writes);
-    promotedToBlock = pending.toBlock;
+  } else if (pending) {
+    if (fromBlock > pending.toBlock) {
+      promoteFeeWrites(pending.writes);
+      promotedToBlock = pending.toBlock;
+    } else if (fromBlock > pending.fromBlock) {
+      for (const marketplaceAddress of pending.writes.keys()) {
+        offChainMarketplaceContractData.delete(marketplaceAddress);
+      }
+    }
   }
+  openedAtBlock = fromBlock;
   stagedOffChainMarketplaceContractData = new Map();
 };
 
@@ -168,6 +189,7 @@ export const beginOffChainMarketplaceFeeBatch = (fromBlock: number) => {
 export const endOffChainMarketplaceFeeBatch = (toBlock: number) => {
   if (stagedOffChainMarketplaceContractData) {
     pendingOffChainMarketplaceContractData = {
+      fromBlock: openedAtBlock,
       toBlock,
       writes: stagedOffChainMarketplaceContractData,
     };
@@ -181,6 +203,7 @@ export const resetOffChainMarketplaceContractData = () => {
   stagedOffChainMarketplaceContractData = null;
   pendingOffChainMarketplaceContractData = null;
   promotedToBlock = -1;
+  openedAtBlock = -1;
 };
 
 /** What the batch currently knows about a marketplace: committed values under its staged writes. */

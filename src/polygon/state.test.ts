@@ -121,6 +121,62 @@ describe("getOffChainMarketplaceContractData", () => {
     });
   });
 
+  describe("when a batch is re-delivered starting inside the range it already covered", () => {
+    let retry: FeeConfig;
+    let seenHeights: number[];
+
+    beforeEach(async () => {
+      seed(V3, FEE_COLLECTOR_SAFE);
+      seenHeights = [];
+      ContractMock.mockImplementation((_ctx: unknown, block: { height: number }) => {
+        seenHeights.push(block.height);
+        return {
+          feeCollector: async () => FEE_COLLECTOR_SAFE,
+          feeRate: async () => BigInt(40000),
+          royaltiesRate: async () => BigInt(25000),
+        };
+      });
+      // Batch 100-200 raises the rate at block 120 and ends without committing. The range comes back
+      // starting at 150, so block 120 is never replayed and the write it made is unrecoverable.
+      beginOffChainMarketplaceFeeBatch(100);
+      setOffChainMarketplaceFeeRate(V3, BigInt(40000));
+      endOffChainMarketplaceFeeBatch(200);
+      beginOffChainMarketplaceFeeBatch(150);
+      retry = await getOffChainMarketplaceContractData(ctx, blockAt(160), V3);
+    });
+
+    // Forgetting the write would leave 25000 cached for good, because an entry with every field set
+    // never reads the chain again.
+    it("should read the chain again rather than keep a value the re-delivery cannot restore", () => {
+      expect(seenHeights).toEqual([159]);
+    });
+
+    it("should give the trade the rate the chain reports", () => {
+      expect(retry.feeRate).toBe(BigInt(40000));
+    });
+  });
+
+  describe("when the cache is cold and the chain read fails", () => {
+    let seed: Promise<FeeConfig>;
+
+    beforeEach(() => {
+      ContractMock.mockImplementation(() => ({
+        feeCollector: async () => FEE_COLLECTOR_SAFE,
+        feeRate: async () => {
+          throw new Error("RPC unavailable");
+        },
+        royaltiesRate: async () => BigInt(25000),
+      }));
+      seed = getOffChainMarketplaceContractData(ctx, blockAt(N), V3);
+    });
+
+    // These values land in a Sale's money columns, so a swallowed read would record a sale with no
+    // fees instead of failing the batch and retrying it.
+    it("should reject rather than hand back an empty configuration", async () => {
+      await expect(seed).rejects.toThrow("RPC unavailable");
+    });
+  });
+
   describe("when the cache is cold and an update earlier in the batch already set one field", () => {
     let data: FeeConfig;
 
