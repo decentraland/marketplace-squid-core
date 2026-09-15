@@ -1,5 +1,5 @@
 import { Data } from "../../model";
-import { parseCSV } from "./utils";
+import { parseCSV, stripNul } from "./utils";
 
 export enum DataType {
   PARCEL = 0,
@@ -8,9 +8,11 @@ export enum DataType {
 
 export function buildData(
   assetId: string,
-  csv: string,
+  rawCsv: string,
   dataType: DataType
 ): Data | null {
+  // NUL bytes here would poison the Data entity's TEXT fields (name/description/ipns) and wedge the batch.
+  const csv = stripNul(rawCsv);
   const dataEntity = new Data({ id: assetId });
 
   if (csv.charAt(0) != "0") {

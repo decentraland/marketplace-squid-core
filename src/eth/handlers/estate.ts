@@ -7,6 +7,7 @@ import {
   UpdateEventArgs,
 } from "../../abi/EstateRegistry";
 import { DataType, buildData, getNFTId } from "../../common/utils";
+import { stripNul } from "../../common/utils/utils";
 import { getAddresses } from "../../common/utils/addresses";
 import {
   Account,
@@ -51,7 +52,7 @@ export function handleCreateEstate(
   if (owner) {
     estate.owner = owner; // @TODO: Check if all the estates have owners later on
   }
-  estate.rawData = _data;
+  estate.rawData = stripNul(_data);
   estate.parcelDistances = [];
   estate.size = 0;
   estate.adjacentToRoadCount = 0;
@@ -273,7 +274,7 @@ export function handleUpdate(
   const id = getNFTId(addresses.EstateRegistry, estateId, Category.estate);
 
   const estate = estates.get(id) || new Estate({ id });
-  estate.rawData = data;
+  estate.rawData = stripNul(data);
 
   const estateData = buildData(id, data, DataType.ESTATE);
   if (estateData) {
