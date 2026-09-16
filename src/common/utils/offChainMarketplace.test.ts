@@ -1,6 +1,3 @@
-import assert from "node:assert";
-import { describe, it } from "node:test";
-
 // getAddresses picks the address book from the chain id, so this has to be set before the module under
 // test resolves it.
 process.env.POLYGON_CHAIN_ID = "80002";
@@ -70,7 +67,9 @@ const indexable = (
   network: Parameters<typeof getTradeEventData>[1]
 ) => {
   const data = getTradeEventData(event, network);
-  assert.ok(data, "expected an indexable trade");
+  if (!data) {
+    throw new Error("expected an indexable trade");
+  }
   return data;
 };
 
@@ -89,8 +88,8 @@ describe("getTradeEventData — sale attribution", () => {
 
       const data = indexable(event, Network.MATIC);
 
-      assert.strictEqual(data.seller, SELLER);
-      assert.strictEqual(data.buyer, BUYER);
+      expect(data.seller).toBe(SELLER);
+      expect(data.buyer).toBe(BUYER);
     });
 
     it("should be immune to a contract standing in for msg.sender", () => {
@@ -107,8 +106,8 @@ describe("getTradeEventData — sale attribution", () => {
 
       const data = indexable(event, Network.MATIC);
 
-      assert.strictEqual(data.seller, SELLER);
-      assert.strictEqual(data.buyer, BUYER);
+      expect(data.seller).toBe(SELLER);
+      expect(data.buyer).toBe(BUYER);
     });
 
     it("should be unchanged when the seller is paid directly", () => {
@@ -123,8 +122,8 @@ describe("getTradeEventData — sale attribution", () => {
 
       const data = indexable(event, Network.MATIC);
 
-      assert.strictEqual(data.seller, SELLER);
-      assert.strictEqual(data.buyer, BUYER);
+      expect(data.seller).toBe(SELLER);
+      expect(data.buyer).toBe(BUYER);
     });
 
     it("should still read the asset side for the buyer and the price", () => {
@@ -137,9 +136,9 @@ describe("getTradeEventData — sale attribution", () => {
 
       const data = indexable(event, Network.MATIC);
 
-      assert.strictEqual(data.collectionAddress, COLLECTION);
-      assert.strictEqual(data.tokenId, 42n);
-      assert.strictEqual(data.price, 4079992178284085849n);
+      expect(data.collectionAddress).toBe(COLLECTION);
+      expect(data.tokenId).toBe(42n);
+      expect(data.price).toBe(4079992178284085849n);
     });
   });
 
@@ -158,8 +157,8 @@ describe("getTradeEventData — sale attribution", () => {
 
       const data = indexable(event, Network.MATIC);
 
-      assert.strictEqual(data.seller, SELLER);
-      assert.strictEqual(data.buyer, BUYER);
+      expect(data.seller).toBe(SELLER);
+      expect(data.buyer).toBe(BUYER);
     });
 
     it("should read the seller from the payment beneficiary when they called directly", () => {
@@ -174,8 +173,8 @@ describe("getTradeEventData — sale attribution", () => {
 
       const data = indexable(event, Network.MATIC);
 
-      assert.strictEqual(data.seller, SELLER);
-      assert.strictEqual(data.buyer, BUYER);
+      expect(data.seller).toBe(SELLER);
+      expect(data.buyer).toBe(BUYER);
     });
   });
 });
@@ -197,7 +196,7 @@ describe("getTradeEventData — a trade with no payment leg", () => {
       received: [],
     });
 
-    assert.doesNotThrow(() => getTradeEventData(event, Network.MATIC));
+    expect(() => getTradeEventData(event, Network.MATIC)).not.toThrow();
   });
 
   it("should not throw when `sent` is empty", () => {
@@ -208,7 +207,7 @@ describe("getTradeEventData — a trade with no payment leg", () => {
       received: [manaAsset(SELLER)],
     });
 
-    assert.doesNotThrow(() => getTradeEventData(event, Network.MATIC));
+    expect(() => getTradeEventData(event, Network.MATIC)).not.toThrow();
   });
 
   it("should report a giveaway as not indexable rather than inventing a bid", () => {
@@ -221,7 +220,7 @@ describe("getTradeEventData — a trade with no payment leg", () => {
       received: [],
     });
 
-    assert.strictEqual(getTradeEventData(event, Network.MATIC), undefined);
+    expect(getTradeEventData(event, Network.MATIC)).toBeUndefined();
   });
 
   it("should still classify a normal order, so the guard costs nothing", () => {
@@ -234,7 +233,7 @@ describe("getTradeEventData — a trade with no payment leg", () => {
 
     const data = indexable(event, Network.MATIC);
 
-    assert.strictEqual(data.seller, SELLER);
-    assert.strictEqual(data.buyer, BUYER);
+    expect(data.seller).toBe(SELLER);
+    expect(data.buyer).toBe(BUYER);
   });
 });

@@ -1,5 +1,3 @@
-import assert from "node:assert";
-import { describe, it } from "node:test";
 import { IssueLogLike, selectIssueLogForTrade } from "./issueLog";
 
 const ISSUE_TOPIC =
@@ -47,19 +45,14 @@ describe("selectIssueLogForTrade", () => {
     const second = selectIssueLogForTrade(logs, { ...params, itemId: 5n });
     const third = selectIssueLogForTrade(logs, { ...params, itemId: 15n });
 
-    assert.ok(first && second && third, "all three mints must resolve a log");
-    assert.strictEqual(first.logIndex, 3, "first item-5 Traded -> issued #1");
-    assert.strictEqual(
-      second.logIndex,
-      10,
-      "second item-5 Traded -> issued #2 (previously dropped)"
-    );
-    assert.strictEqual(third.logIndex, 17, "item-15 Traded -> its own log");
-    assert.notStrictEqual(
-      first.logIndex,
-      second.logIndex,
-      "the two item-5 mints must map to different Issue logs"
-    );
+    if (!first || !second || !third) {
+      throw new Error("all three mints must resolve a log");
+    }
+    // first item-5 Traded -> issued #1; second -> issued #2 (previously dropped); item-15 -> its own log
+    expect(first.logIndex).toBe(3);
+    expect(second.logIndex).toBe(10);
+    expect(third.logIndex).toBe(17);
+    expect(first.logIndex).not.toBe(second.logIndex);
   });
 
   it("when there is a single mint it returns that log", () => {
@@ -68,18 +61,15 @@ describe("selectIssueLogForTrade", () => {
       ...baseParams(),
       itemId: 5n,
     });
-    assert.strictEqual(chosen?.logIndex, 3);
+    expect(chosen?.logIndex).toBe(3);
   });
 
   it("when there are no more unconsumed logs it returns undefined", () => {
     const logs = [issueLog(3, 5)];
     const params = { ...baseParams(), itemId: 5n };
-    assert.ok(selectIssueLogForTrade(logs, params));
-    assert.strictEqual(
-      selectIssueLogForTrade(logs, params),
-      undefined,
-      "the single Issue log is consumed and not reused"
-    );
+    expect(selectIssueLogForTrade(logs, params)).toBeTruthy();
+    // the single Issue log is consumed and not reused
+    expect(selectIssueLogForTrade(logs, params)).toBeUndefined();
   });
 
   it("when logs are out of order it consumes them in ascending logIndex order", () => {
@@ -87,8 +77,8 @@ describe("selectIssueLogForTrade", () => {
     const params = { ...baseParams(), itemId: 5n };
     const first = selectIssueLogForTrade(logs, params);
     const second = selectIssueLogForTrade(logs, params);
-    assert.strictEqual(first?.logIndex, 3);
-    assert.strictEqual(second?.logIndex, 10);
+    expect(first?.logIndex).toBe(3);
+    expect(second?.logIndex).toBe(10);
   });
 
   it("when logs belong to another item, tx or contract they are ignored", () => {
@@ -103,6 +93,6 @@ describe("selectIssueLogForTrade", () => {
       ...baseParams(),
       itemId: 5n,
     });
-    assert.strictEqual(chosen?.logIndex, 7);
+    expect(chosen?.logIndex).toBe(7);
   });
 });
