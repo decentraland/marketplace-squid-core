@@ -1,5 +1,3 @@
-import assert from "node:assert";
-import { describe, it } from "node:test";
 import * as ethMainnet from "../../eth/addresses/mainnet";
 import * as ethSepolia from "../../eth/addresses/sepolia";
 import * as polygonAmoy from "../../polygon/addresses/amoy";
@@ -47,7 +45,7 @@ describe("contract address files", () => {
         .filter(([, address]) => !LOWERCASE_ADDRESS.test(address))
         .map(([exportPath, address]) => `${exportPath}=${address}`);
 
-      assert.deepEqual(offending, []);
+      expect(offending).toEqual([]);
     });
   }
 
@@ -57,9 +55,6 @@ describe("contract address files", () => {
       .flatMap((file) => Object.values(file))
       .filter((value) => typeof value === "string" && value.startsWith("0x")).length;
 
-    assert.ok(
-      reached > topLevelOnly,
-      `expected the walk to reach more than the ${topLevelOnly} top-level addresses, got ${reached}`
-    );
+    expect(reached).toBeGreaterThan(topLevelOnly);
   });
 });
