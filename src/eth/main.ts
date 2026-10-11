@@ -124,6 +124,7 @@ const db = new TypeormDatabase({
   // over-reverts and re-applies, which is correct, and is how this squid ran before the Portal
   // migration (setFinalityConfirmation(75) with hot blocks ON, not a 75-block wait).
   supportHotBlocks: true,
+  // indexer.sh creates this schema, readable by dapps_marketplace_user: keep the two names in step.
   stateSchema: `eth_processor_${schemaName}`,
 });
 // Expose Prometheus metrics (sqd_processor_last_block / chain_height) — the squid

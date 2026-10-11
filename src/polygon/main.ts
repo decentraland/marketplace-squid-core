@@ -335,6 +335,7 @@ const db = new TypeormDatabase({
   // non-contiguous blocks which the hot-block path rejects. Polygon finality is
   // only a few blocks (~seconds) behind head, so this stays effectively real-time.
   supportHotBlocks: false,
+  // indexer.sh creates this schema, readable by dapps_marketplace_user: keep the two names in step.
   stateSchema: `polygon_processor_${schemaName}`,
 });
 // Expose Prometheus metrics (sqd_processor_last_block / chain_height) — the squid
