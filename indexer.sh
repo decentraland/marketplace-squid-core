@@ -71,6 +71,15 @@ else
     -- Make squid_server_user able to grant permissions on objects in this schema
     GRANT $NEW_DB_USER TO $DB_USER;
 
+    -- The processors' state schemas, named as in src/eth/main.ts and src/polygon/main.ts (keep them in
+    -- step). API_READER_USER reads each processor's height there to tell whether a block is indexed yet,
+    -- so they are created here, owned by NEW_DB_USER, with the grants in place before its tables exist.
+    CREATE SCHEMA eth_processor_$NEW_SCHEMA_NAME AUTHORIZATION $NEW_DB_USER;
+    CREATE SCHEMA polygon_processor_$NEW_SCHEMA_NAME AUTHORIZATION $NEW_DB_USER;
+    GRANT USAGE ON SCHEMA eth_processor_$NEW_SCHEMA_NAME, polygon_processor_$NEW_SCHEMA_NAME TO $API_READER_USER;
+    ALTER DEFAULT PRIVILEGES FOR ROLE $NEW_DB_USER IN SCHEMA eth_processor_$NEW_SCHEMA_NAME, polygon_processor_$NEW_SCHEMA_NAME
+      GRANT SELECT ON TABLES TO $API_READER_USER;
+
     -- API_READER_USER needs to be able to grant triggers on tables created by NEW_DB_USER
     ALTER DEFAULT PRIVILEGES FOR ROLE $NEW_DB_USER IN SCHEMA $NEW_SCHEMA_NAME
       GRANT ALL PRIVILEGES ON TABLES TO $API_READER_USER;
