@@ -11,6 +11,7 @@ import {
 import { getOwner } from "../../common/utils/nft";
 import { ONE_MILLION } from "../../common/utils/utils";
 import {
+  Account,
   AnalyticsDayData,
   Item,
   ItemsDayData,
@@ -252,7 +253,14 @@ export async function trackSale(
 
   // sellerAccount.save();
 
-  // update fees collector account
+  // update fees collector account. The batch does not read it up front, since its address comes
+  // from the contract's state, so it is read here: a new account would replace the stored one and
+  // reset what it has earned.
+  const feesCollectorId = `${feesCollector}-${Network.POLYGON}`;
+  if (!accounts.has(feesCollectorId)) {
+    const stored = await ctx.store.get(Account, feesCollectorId);
+    if (stored) accounts.set(feesCollectorId, stored);
+  }
   const feesCollectorAccount = createOrLoadAccount(
     accounts,
     feesCollector,
