@@ -75,6 +75,7 @@ export const POLYGON_INDICES: IndexGroup = {
     { name: "IDX_c36d2ea36d7de5e265c30b8be8", create: `CREATE INDEX "IDX_c36d2ea36d7de5e265c30b8be8" ON "nft" ("metadata_id")` },
     { name: "IDX_83cfd3a290ed70c660f8c9dfe2", create: `CREATE INDEX "IDX_83cfd3a290ed70c660f8c9dfe2" ON "nft" ("owner_id")` },
     { name: "IDX_b92ac830e4b3a630162a898203", create: `CREATE INDEX "IDX_b92ac830e4b3a630162a898203" ON "nft" ("active_order_id")` },
+    { name: "IDX_nft_ens_lower_name", create: `CREATE INDEX "IDX_nft_ens_lower_name" ON "nft" (lower("name")) WHERE "category" = 'ens'` },
   ],
   order: [
     { name: "IDX_2485593ed8c9972197aeaf7da6", create: `CREATE INDEX "IDX_2485593ed8c9972197aeaf7da6" ON "order" ("expires_at_normalized")` },
@@ -95,6 +96,7 @@ export const POLYGON_INDICES: IndexGroup = {
     // batch, for the same reason as order.nft_id above.
     { name: "IDX_9ddbd0267ddb9c59621775f94e", create: `CREATE INDEX "IDX_9ddbd0267ddb9c59621775f94e" ON "item" ("collection_id", "blockchain_id")`, keepDuringBulkLoad: true },
     { name: "IDX_6d5bb320c601281cd3a213979e", create: `CREATE INDEX "IDX_6d5bb320c601281cd3a213979e" ON "item" ("metadata_id")` },
+    { name: "IDX_item_urn", create: `CREATE INDEX "IDX_item_urn" ON "item" ("urn")` },
   ],
   bid: [
     { name: "IDX_3caf2d6b31d2fe45a2b85b8191", create: `CREATE INDEX "IDX_3caf2d6b31d2fe45a2b85b8191" ON "bid" ("nft_id")` },
@@ -105,6 +107,7 @@ export const POLYGON_INDICES: IndexGroup = {
     { name: "IDX_be54ea276e0f665ffc38630fc0", create: `CREATE INDEX "IDX_be54ea276e0f665ffc38630fc0" ON "transfer" ("from")` },
     { name: "IDX_4cbc37e8c3b47ded161f44c24f", create: `CREATE INDEX "IDX_4cbc37e8c3b47ded161f44c24f" ON "transfer" ("to")` },
     { name: "IDX_f605a03972b4f28db27a0ee70d", create: `CREATE INDEX "IDX_f605a03972b4f28db27a0ee70d" ON "transfer" ("tx_hash")` },
+    { name: "IDX_transfer_nft_block", create: `CREATE INDEX "IDX_transfer_nft_block" ON "transfer" ("nft_id", "block")` },
   ],
   mint: [
     { name: "IDX_cd587534d4140377bb52337ae4", create: `CREATE INDEX "IDX_cd587534d4140377bb52337ae4" ON "mint" ("item_id")` },
@@ -142,6 +145,7 @@ export const ETH_INDICES: IndexGroup = {
     { name: "IDX_a7c5c87cd4ffc1e1129f0c5f43", create: `CREATE INDEX "IDX_a7c5c87cd4ffc1e1129f0c5f43" ON "parcel" ("owner_id")` },
     { name: "IDX_da4912d77606dcfabe5da7eebc", create: `CREATE INDEX "IDX_da4912d77606dcfabe5da7eebc" ON "parcel" ("estate_id")` },
     { name: "IDX_04ab2b996d659d2f86dbcee860", create: `CREATE INDEX "IDX_04ab2b996d659d2f86dbcee860" ON "parcel" ("data_id")` },
+    { name: "IDX_parcel_x_y", create: `CREATE INDEX "IDX_parcel_x_y" ON "parcel" ("x", "y")` },
   ],
   data: [
     { name: "IDX_8694618f20c7b364d4cb23c111", create: `CREATE INDEX "IDX_8694618f20c7b364d4cb23c111" ON "data" ("parcel_id")` },
