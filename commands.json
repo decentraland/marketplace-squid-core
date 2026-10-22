@@ -90,6 +90,12 @@
         "100",
         "--dumb-cache-max-age",
         "2000",
+        "--sql-statement-timeout",
+        "10000",
+        "--max-root-fields",
+        "20",
+        "--isolation-level",
+        "REPEATABLE READ",
         "--dialect",
         "thegraph"
       ]
