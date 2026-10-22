@@ -2,6 +2,8 @@
 export const LANDRegistry = "0x42f4ba48791e2de32f5fbf553441c2672864bb33";
 export const EstateRegistry = "0x369a7fbe718c870c79f99fb423882e8dd8b20486";
 export const Marketplace = "0xccf0c17da6cd68041b1bf0f7e015767242077d8c";
+// The LAND marketplace of 2018 was never deployed on a testnet.
+export const LegacyMarketplace = "0x0000000000000000000000000000000000000000";
 export const DCLRegistrar = "0x7518456ae93eb98f3e64571b689c626616bb7f30";
 export const ERC721Bid = "0x2c2835b95852fd975e087b3b25297322728792e2";
 export const DCLControllerV2 = "0xd2046364317c21fa8d121d84185c39e6e910cf89";

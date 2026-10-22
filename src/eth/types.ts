@@ -44,6 +44,9 @@ export type EthereumInMemoryState = {
       | marketplaceAbi.OrderCreatedEventArgs
       | marketplaceAbi.OrderSuccessfulEventArgs
       | marketplaceAbi.OrderCancelledEventArgs
+      | marketplaceAbi.AuctionCreatedEventArgs
+      | marketplaceAbi.AuctionSuccessfulEventArgs
+      | marketplaceAbi.AuctionCancelledEventArgs
       | erc721BidAbi.BidCreatedEventArgs
       | erc721BidAbi.BidCancelledEventArgs
       | erc721BidAbi.BidAcceptedEventArgs

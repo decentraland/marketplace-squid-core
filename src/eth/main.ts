@@ -62,6 +62,11 @@ import {
   handleOrderSuccessful,
   handleTraded,
 } from "./handlers/marketplace";
+import {
+  handleAuctionCancelled,
+  handleAuctionCreated,
+  handleAuctionSuccessful,
+} from "./handlers/legacyMarketplace";
 import { getStoredData } from "./store";
 import { decodeTokenIdsToCoordinates } from "./modules/land";
 import {
@@ -556,6 +561,36 @@ run(dataSource, db, async (simpleCtx) => {
             });
             break;
           }
+          // the LAND marketplace of 2018: parcels only
+          case marketplaceAbi.events.AuctionCreated.topic:
+          case marketplaceAbi.events.AuctionSuccessful.topic:
+          case marketplaceAbi.events.AuctionCancelled.topic: {
+            const event =
+              topic === marketplaceAbi.events.AuctionCreated.topic
+                ? marketplaceAbi.events.AuctionCreated.decode(log)
+                : topic === marketplaceAbi.events.AuctionSuccessful.topic
+                ? marketplaceAbi.events.AuctionSuccessful.decode(log)
+                : marketplaceAbi.events.AuctionCancelled.decode(log);
+            addEventToStateIdsBasedOnCategory(
+              addresses.LANDRegistry,
+              event.assetId,
+              {
+                landTokenIds,
+                estateTokenIds,
+                ensTokenIds,
+                tokenIds,
+              }
+            );
+            markteplaceEvents.push({
+              topic,
+              event,
+              block,
+              log,
+              marketplaceOwnerCutPerMillion: getMarketplaceOwnerCutPerMillion(),
+              bidOwnerCutPerMillion: getBidOwnerCutPerMillion(),
+            });
+            break;
+          }
           case marketplaceAbi.events.ChangedOwnerCutPerMillion.topic:
           case erc721Bid.events.ChangedOwnerCutPerMillion.topic: {
             const event =
@@ -894,6 +929,27 @@ run(dataSource, db, async (simpleCtx) => {
           counts,
           sales,
           items
+        );
+      } else if (topic === marketplaceAbi.events.AuctionCreated.topic) {
+        handleAuctionCreated(
+          event as marketplaceAbi.AuctionCreatedEventArgs,
+          block,
+          log.address,
+          log.transactionHash,
+          orders,
+          nfts
+        );
+      } else if (topic === marketplaceAbi.events.AuctionSuccessful.topic) {
+        handleAuctionSuccessful(
+          event as marketplaceAbi.AuctionSuccessfulEventArgs,
+          block,
+          orders
+        );
+      } else if (topic === marketplaceAbi.events.AuctionCancelled.topic) {
+        handleAuctionCancelled(
+          event as marketplaceAbi.AuctionCancelledEventArgs,
+          block,
+          orders
         );
       } else if (topic === marketplaceAbi.events.OrderCancelled.topic) {
         handleOrderCancelled(
