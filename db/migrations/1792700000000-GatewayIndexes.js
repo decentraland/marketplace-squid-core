@@ -7,13 +7,20 @@
 //
 // None of them is on the processors' write path, so src/common/utils/indexManager.ts drops them during
 // a backfill and creates them again at the chain head, like the other query-layer indexes.
+//
+// The name index uses `text_pattern_ops`, so it serves the prefix lookups the API prints for
+// `name_starts_with_nocase` (`starts_with(lower(name), ...)`) as well as equality, without changing the
+// column's collation.
+//
+// These indexes are not declared in schema.graphql, so `squid-typeorm-migration generate` writes a
+// DROP INDEX for each in the next generated migration: remove those lines from it.
 module.exports = class GatewayIndexes1792700000000 {
     name = 'GatewayIndexes1792700000000'
 
     async up(db) {
         await db.query(`CREATE INDEX "IDX_item_urn" ON "item" ("urn")`)
         await db.query(`CREATE INDEX "IDX_parcel_x_y" ON "parcel" ("x", "y")`)
-        await db.query(`CREATE INDEX "IDX_nft_ens_lower_name" ON "nft" (lower("name")) WHERE "category" = 'ens'`)
+        await db.query(`CREATE INDEX "IDX_nft_ens_lower_name" ON "nft" (lower("name") text_pattern_ops) WHERE "category" = 'ens'`)
         await db.query(`CREATE INDEX "IDX_transfer_nft_block" ON "transfer" ("nft_id", "block")`)
     }
 

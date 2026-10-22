@@ -75,7 +75,7 @@ export const POLYGON_INDICES: IndexGroup = {
     { name: "IDX_c36d2ea36d7de5e265c30b8be8", create: `CREATE INDEX "IDX_c36d2ea36d7de5e265c30b8be8" ON "nft" ("metadata_id")` },
     { name: "IDX_83cfd3a290ed70c660f8c9dfe2", create: `CREATE INDEX "IDX_83cfd3a290ed70c660f8c9dfe2" ON "nft" ("owner_id")` },
     { name: "IDX_b92ac830e4b3a630162a898203", create: `CREATE INDEX "IDX_b92ac830e4b3a630162a898203" ON "nft" ("active_order_id")` },
-    { name: "IDX_nft_ens_lower_name", create: `CREATE INDEX "IDX_nft_ens_lower_name" ON "nft" (lower("name")) WHERE "category" = 'ens'` },
+    { name: "IDX_nft_ens_lower_name", create: `CREATE INDEX "IDX_nft_ens_lower_name" ON "nft" (lower("name") text_pattern_ops) WHERE "category" = 'ens'` },
   ],
   order: [
     { name: "IDX_2485593ed8c9972197aeaf7da6", create: `CREATE INDEX "IDX_2485593ed8c9972197aeaf7da6" ON "order" ("expires_at_normalized")` },
