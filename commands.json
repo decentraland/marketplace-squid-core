@@ -94,6 +94,8 @@
         "10000",
         "--max-root-fields",
         "20",
+        "--max-response-size",
+        "200000",
         "--isolation-level",
         "REPEATABLE READ",
         "--dialect",
