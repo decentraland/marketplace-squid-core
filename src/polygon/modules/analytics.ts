@@ -76,6 +76,25 @@ export function getOperation(buyer: string): Operation {
   return Operation.native;
 }
 
+/**
+ * A Polygon account a sale pays, read from the store when the batch did not read it up front: the
+ * fees collector, whose address comes from the contract's state, or an item's creator or beneficiary
+ * changed earlier in the same batch. A new account would replace the stored one and reset what it
+ * holds. Once read, it stays in the batch's accounts.
+ */
+export async function loadAccount(
+  ctx: Context,
+  accounts: Map<string, Account>,
+  address: string
+): Promise<Account> {
+  const id = `${address}-${Network.POLYGON}`;
+  if (!accounts.has(id)) {
+    const stored = await ctx.store.get(Account, id);
+    if (stored) accounts.set(id, stored);
+  }
+  return createOrLoadAccount(accounts, address, Network.POLYGON);
+}
+
 export async function trackSale(
   ctx: Context,
   block: Block,
@@ -181,10 +200,10 @@ export async function trackSale(
         "hex"
       );
       // update royalties collector account
-      const royaltiesCollectorAccount = createOrLoadAccount(
+      const royaltiesCollectorAccount = await loadAccount(
+        ctx,
         accounts,
-        royaltiesCollectorAddress,
-        Network.POLYGON
+        royaltiesCollectorAddress
       );
       royaltiesCollectorAccount.earned =
         royaltiesCollectorAccount.earned + sale.royaltiesCut;
@@ -253,19 +272,8 @@ export async function trackSale(
 
   // sellerAccount.save();
 
-  // update fees collector account. The batch does not read it up front, since its address comes
-  // from the contract's state, so it is read here: a new account would replace the stored one and
-  // reset what it has earned.
-  const feesCollectorId = `${feesCollector}-${Network.POLYGON}`;
-  if (!accounts.has(feesCollectorId)) {
-    const stored = await ctx.store.get(Account, feesCollectorId);
-    if (stored) accounts.set(feesCollectorId, stored);
-  }
-  const feesCollectorAccount = createOrLoadAccount(
-    accounts,
-    feesCollector,
-    Network.POLYGON
-  );
+  // update fees collector account
+  const feesCollectorAccount = await loadAccount(ctx, accounts, feesCollector);
   feesCollectorAccount.earned =
     feesCollectorAccount.earned + sale.feesCollectorCut;
   feesCollectorAccount.royalties =
@@ -297,11 +305,7 @@ export async function trackSale(
     buildCountFromPrimarySale(counts, price);
     // count.save();
     // track the sale and mana earned in the creator account
-    const creatorAccount = createOrLoadAccount(
-      accounts,
-      item.creator,
-      Network.POLYGON
-    );
+    const creatorAccount = await loadAccount(ctx, accounts, item.creator);
     creatorAccount.primarySales += 1;
     creatorAccount.primarySalesEarned =
       creatorAccount.primarySalesEarned + (price - totalFees);

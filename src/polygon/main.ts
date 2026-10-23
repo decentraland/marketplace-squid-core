@@ -804,8 +804,13 @@ run(dataSource, db, async (simpleCtx) => {
 
             // If we have prefetched data, use the owner from there
             let owner: string;
+            // The creator's account gets the collection counted: read it too, or the new
+            // collection replaces it with a new one. Collections made through the manager have
+            // the forwarder as owner, so the two differ.
+            let creator: string;
             if (prefetched) {
               owner = prefetched.owner;
+              creator = prefetched.creator;
             } else {
               // Fallback to individual RPC call if multicall failed
               const collectionContract = new CollectionV2ABI.Contract(
@@ -815,6 +820,7 @@ run(dataSource, db, async (simpleCtx) => {
               );
               const rpcStart = performance.now();
               owner = (await collectionContract.owner()).toLowerCase();
+              creator = (await collectionContract.creator()).toLowerCase();
               const rpcDuration = performance.now() - rpcStart;
               metrics.rpcCalls.owner++;
               metrics.rpcTime.owner += rpcDuration;
@@ -822,6 +828,7 @@ run(dataSource, db, async (simpleCtx) => {
             }
 
             accountIds.add(owner);
+            accountIds.add(creator);
             collectionIds.add(event._address.toLowerCase());
 
             // ⚡ OPTIMIZATION: Use pre-indexed lookups (O(1) instead of O(n) loop)
