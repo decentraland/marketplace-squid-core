@@ -61,6 +61,7 @@ import {
   handleIssue,
   handleRescueItem,
   handleSetApproved,
+  getCurator,
   handleSetEditable,
   handleSetGlobalManager,
   handleSetGlobalMinter,
@@ -1095,9 +1096,13 @@ run(dataSource, db, async (simpleCtx) => {
                 event = CollectionV2ABI.events.AddItem.decode(log);
                 analyticsIds.add(analyticDayDataId);
                 break;
-              case CollectionV2ABI.events.RescueItem.topic:
+              case CollectionV2ABI.events.RescueItem.topic: {
                 event = CollectionV2ABI.events.RescueItem.decode(log);
+                // Read the curator's account, as for SetApproved.
+                const curator = log.transaction && getCurator(log.transaction);
+                if (curator) accountIds.add(curator);
                 break;
+              }
               case CollectionV2ABI.events.UpdateItemData.topic:
                 event = CollectionV2ABI.events.UpdateItemData.decode(log);
                 pushToMapArray(itemIds, log.address, event._itemId);
@@ -1117,9 +1122,14 @@ run(dataSource, db, async (simpleCtx) => {
                 // we also need the feeCollector account
                 break;
               }
-              case CollectionV2ABI.events.SetApproved.topic:
+              case CollectionV2ABI.events.SetApproved.topic: {
                 event = CollectionV2ABI.events.SetApproved.decode(log);
+                // Read the curator's account, or the curation replaces it with a new one and
+                // loses what it holds, such as its committee membership.
+                const curator = log.transaction && getCurator(log.transaction);
+                if (curator) accountIds.add(curator);
                 break;
+              }
               case CollectionV2ABI.events.SetEditable.topic:
                 event = CollectionV2ABI.events.SetEditable.decode(log);
                 break;

@@ -610,12 +610,8 @@ export function handleRescueItem(
   if (isNewContent && BigInt(block.height) >= blockWhereRescueItemsStarted) {
     // @TODO check this out
     // Create curation
-    const txInput = transaction.input;
-    // console.log("transaction inside handler: ", transaction);
-    // console.log("transaction.hash: ", transaction.hash);
-    // console.log("txInput: ", txInput);
-    // forwardMetaTx(address _target, bytes calldata _data) or manageCollection(address,address,address,bytes[]) selector
-    if (txInput.startsWith("0x07bd3522") || txInput.startsWith("0x81c9308e")) {
+    const curator = getCurator(transaction);
+    if (curator) {
       let curationId = getCurationId(
         collectionAddress,
         transaction.hash,
@@ -623,17 +619,6 @@ export function handleRescueItem(
       );
 
       const curation = new Curation({ id: curationId });
-      let curator = "";
-      if (txInput.startsWith("0x81c9308e")) {
-        // manageCollection(address,address,address,bytes[]) selector
-        curator = transaction.from;
-      } else {
-        // executeMetaTransaction(address,bytes,bytes32,bytes32,uint8) selector
-        const index = txInput.indexOf("0c53c51c");
-
-        // Sender is the first parameter of the executeMetaTransaction
-        curator = "0x" + txInput.substr(index + 32, 40);
-      }
 
       curation.collection = collection;
       curation.item = item;
@@ -799,6 +784,30 @@ export async function handleIssue(
   //   }
 }
 
+/**
+ * The committee member who reviewed a collection or an item in this transaction: the sender of
+ * manageCollection, or the signer of the meta transaction forwardMetaTx relays. Undefined for any
+ * other transaction, which records no curation. The batch reads its account up front by this, so
+ * the curation adds to the stored account instead of replacing it with a new one.
+ */
+export function getCurator(transaction: {
+  input: string;
+  from: string;
+}): string | undefined {
+  const txInput = transaction.input;
+  // manageCollection(address,address,address,bytes[]) selector
+  if (txInput.startsWith("0x81c9308e")) return transaction.from;
+  // forwardMetaTx(address _target, bytes calldata _data) selector
+  if (txInput.startsWith("0x07bd3522")) {
+    // executeMetaTransaction(address,bytes,bytes32,bytes32,uint8) selector
+    const index = BigInt(txInput.indexOf("0c53c51c"));
+
+    // Sender is the first parameter of the executeMetaTransaction
+    return "0x" + txInput.substr(+(index + BigInt(32)).toString(), 40);
+  }
+  return undefined;
+}
+
 export function handleSetApproved(
   //   ctx: Context,
   collectionAddress: string,
@@ -848,26 +857,14 @@ export function handleSetApproved(
   const rescueBlock = getBlockWhereRescueItemsStarted();
   if (block.height > rescueBlock) {
     // Create curation
-    let txInput = transaction.input;
-    // forwardMetaTx(address _target, bytes calldata _data) or manageCollection(address,address,address,bytes[]) selector
-    if (txInput.startsWith("0x07bd3522") || txInput.startsWith("0x81c9308e")) {
+    const curator = getCurator(transaction);
+    if (curator) {
       const curationId = getCurationId(
         collectionAddress,
         transaction.hash,
         log.logIndex.toString()
       );
       const curation = new Curation({ id: curationId });
-      let curator = "";
-      if (txInput.startsWith("0x81c9308e")) {
-        // manageCollection(address,address,address,bytes[]) selector
-        curator = transaction.from;
-      } else {
-        // executeMetaTransaction(address,bytes,bytes32,bytes32,uint8) selector
-        const index = BigInt(txInput.indexOf("0c53c51c"));
-
-        // Sender is the first parameter of the executeMetaTransaction
-        curator = "0x" + txInput.substr(+(index + BigInt(32)).toString(), 40);
-      }
 
       const curatorAccount = createOrLoadAccount(
         accounts,
