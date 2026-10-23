@@ -143,6 +143,17 @@ export const dataSource = new DataSourceBuilder()
       ],
     },
   })
+  // On a testnet the address is Null, which no contract emits from.
+  .addLog({
+    where: {
+      address: [addresses.LegacyMarketplace],
+      topic0: [
+        marketplaceAbi.events.AuctionCreated.topic,
+        marketplaceAbi.events.AuctionSuccessful.topic,
+        marketplaceAbi.events.AuctionCancelled.topic,
+      ],
+    },
+  })
   .addLog({
     where: {
       address: [addresses.DCLRegistrar],
