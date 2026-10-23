@@ -822,7 +822,8 @@ run(dataSource, db, async (simpleCtx) => {
               owner = (await collectionContract.owner()).toLowerCase();
               creator = (await collectionContract.creator()).toLowerCase();
               const rpcDuration = performance.now() - rpcStart;
-              metrics.rpcCalls.owner++;
+              // owner() and creator()
+              metrics.rpcCalls.owner += 2;
               metrics.rpcTime.owner += rpcDuration;
               metrics.rpcTime.total += rpcDuration;
             }

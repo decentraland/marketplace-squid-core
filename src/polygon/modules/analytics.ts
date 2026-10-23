@@ -232,7 +232,7 @@ export async function trackSale(
   sales.set(saleId, sale);
 
   // update buyer account
-  const buyerAccount = createOrLoadAccount(accounts, buyer, Network.POLYGON);
+  const buyerAccount = await loadAccount(ctx, accounts, buyer);
   buyerAccount.purchases += 1;
   buyerAccount.spent = buyerAccount.spent + price;
 
@@ -253,7 +253,8 @@ export async function trackSale(
   // buyerAccount.save();
 
   // update seller account
-  const sellerAccount = createOrLoadAccount(accounts, seller, Network.POLYGON);
+  // On a mint the seller is the item's creator, which may not have been read up front.
+  const sellerAccount = await loadAccount(ctx, accounts, seller);
   sellerAccount.sales += 1;
   sellerAccount.earned = sellerAccount.earned + (price - totalFees);
   sellerAccount.uniqueCollectors = updateUniqueCollectorsSet(
