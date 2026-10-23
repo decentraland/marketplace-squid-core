@@ -11,6 +11,7 @@ import {
 import { getOwner } from "../../common/utils/nft";
 import { ONE_MILLION } from "../../common/utils/utils";
 import {
+  Account,
   AnalyticsDayData,
   Item,
   ItemsDayData,
@@ -73,6 +74,25 @@ export function getOperation(buyer: string): Operation {
     return Operation.credits;
   }
   return Operation.native;
+}
+
+/**
+ * A Polygon account a sale pays, read from the store when the batch did not read it up front: the
+ * fees collector, whose address comes from the contract's state, or an item's creator or beneficiary
+ * changed earlier in the same batch. A new account would replace the stored one and reset what it
+ * holds. Once read, it stays in the batch's accounts.
+ */
+export async function loadAccount(
+  ctx: Context,
+  accounts: Map<string, Account>,
+  address: string
+): Promise<Account> {
+  const id = `${address}-${Network.POLYGON}`;
+  if (!accounts.has(id)) {
+    const stored = await ctx.store.get(Account, id);
+    if (stored) accounts.set(id, stored);
+  }
+  return createOrLoadAccount(accounts, address, Network.POLYGON);
 }
 
 export async function trackSale(
@@ -180,10 +200,10 @@ export async function trackSale(
         "hex"
       );
       // update royalties collector account
-      const royaltiesCollectorAccount = createOrLoadAccount(
+      const royaltiesCollectorAccount = await loadAccount(
+        ctx,
         accounts,
-        royaltiesCollectorAddress,
-        Network.POLYGON
+        royaltiesCollectorAddress
       );
       royaltiesCollectorAccount.earned =
         royaltiesCollectorAccount.earned + sale.royaltiesCut;
@@ -212,7 +232,7 @@ export async function trackSale(
   sales.set(saleId, sale);
 
   // update buyer account
-  const buyerAccount = createOrLoadAccount(accounts, buyer, Network.POLYGON);
+  const buyerAccount = await loadAccount(ctx, accounts, buyer);
   buyerAccount.purchases += 1;
   buyerAccount.spent = buyerAccount.spent + price;
 
@@ -233,7 +253,8 @@ export async function trackSale(
   // buyerAccount.save();
 
   // update seller account
-  const sellerAccount = createOrLoadAccount(accounts, seller, Network.POLYGON);
+  // On a mint the seller is the item's creator, which may not have been read up front.
+  const sellerAccount = await loadAccount(ctx, accounts, seller);
   sellerAccount.sales += 1;
   sellerAccount.earned = sellerAccount.earned + (price - totalFees);
   sellerAccount.uniqueCollectors = updateUniqueCollectorsSet(
@@ -253,11 +274,7 @@ export async function trackSale(
   // sellerAccount.save();
 
   // update fees collector account
-  const feesCollectorAccount = createOrLoadAccount(
-    accounts,
-    feesCollector,
-    Network.POLYGON
-  );
+  const feesCollectorAccount = await loadAccount(ctx, accounts, feesCollector);
   feesCollectorAccount.earned =
     feesCollectorAccount.earned + sale.feesCollectorCut;
   feesCollectorAccount.royalties =
@@ -289,11 +306,7 @@ export async function trackSale(
     buildCountFromPrimarySale(counts, price);
     // count.save();
     // track the sale and mana earned in the creator account
-    const creatorAccount = createOrLoadAccount(
-      accounts,
-      item.creator,
-      Network.POLYGON
-    );
+    const creatorAccount = await loadAccount(ctx, accounts, item.creator);
     creatorAccount.primarySales += 1;
     creatorAccount.primarySalesEarned =
       creatorAccount.primarySalesEarned + (price - totalFees);

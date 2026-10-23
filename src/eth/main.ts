@@ -417,9 +417,12 @@ run(dataSource, db, async (simpleCtx) => {
             break;
           }
           case estateRegistryABI.events.CreateEstate.topic: {
+            const event = estateRegistryABI.events.CreateEstate.decode(log);
+            // Read the owner's account, or the handler replaces it with a new one.
+            accountIds.add(event._owner);
             markteplaceEvents.push({
               topic,
-              event: estateRegistryABI.events.CreateEstate.decode(log),
+              event,
               block,
               log,
             });
@@ -471,14 +474,18 @@ run(dataSource, db, async (simpleCtx) => {
             break;
           }
           // ens
-          case dclRegistrarAbi.events.NameRegistered.topic:
+          case dclRegistrarAbi.events.NameRegistered.topic: {
+            const event = dclRegistrarAbi.events.NameRegistered.decode(log);
+            // Read the caller's account, or the handler replaces it with a new one.
+            accountIds.add(event._caller);
             ensEvents.push({
               topic,
-              event: dclRegistrarAbi.events.NameRegistered.decode(log),
+              event,
               block,
               log,
             });
             break;
+          }
           case dclControllerV2abi.events.NameBought.topic:
             analyticsIds.add(analyticDayDataId);
             ensEvents.push({
