@@ -18,6 +18,7 @@ import {
 } from "../model";
 import { Context } from "./processor";
 import { PolygonInMemoryState, PolygonStoredData } from "./types";
+import { findInChunks } from "../common/utils/store";
 
 // Index a list of entities by their id into a Map for O(1) lookups.
 const toMapById = <T extends { id: string }>(entities: T[]): Map<string, T> =>
@@ -81,8 +82,8 @@ export const getStoredData = async (
     metadatas,
   ] = await Promise.all([
     // NFTs with relations
-    ctx.store
-      .find(NFT, {
+    findInChunks(nftIds, (chunk) =>
+      ctx.store.find(NFT, {
         relations: {
           owner: true,
           activeOrder: true,
@@ -90,33 +91,33 @@ export const getStoredData = async (
           item: true,
         },
         where: {
-          id: In(nftIds),
+          id: In(chunk),
           network: ModelNetwork.POLYGON,
         },
       })
-      .then(toMapById),
+    ).then(toMapById),
 
     // Analytics
-    ctx.store
-      .findBy(AnalyticsDayData, {
-        id: In([...Array.from(analyticsIds.values())]),
+    findInChunks([...analyticsIds], (chunk) =>
+      ctx.store.findBy(AnalyticsDayData, {
+        id: In(chunk),
         network: ModelNetwork.POLYGON,
       })
-      .then(toMapById),
+    ).then(toMapById),
 
     // ItemDayDatas
-    ctx.store
-      .findBy(ItemsDayData, {
-        id: In([...Array.from(itemDayDataIds.values())]),
+    findInChunks([...itemDayDataIds], (chunk) =>
+      ctx.store.findBy(ItemsDayData, {
+        id: In(chunk),
       })
-      .then(toMapById),
+    ).then(toMapById),
 
     // AccountsDayDatas
-    ctx.store
-      .findBy(AccountsDayData, {
-        id: In([...Array.from(analyticsIds.values())]),
+    findInChunks([...analyticsIds], (chunk) =>
+      ctx.store.findBy(AccountsDayData, {
+        id: In(chunk),
       })
-      .then(toMapById),
+    ).then(toMapById),
 
     // Counts
     ctx.store
@@ -128,100 +129,95 @@ export const getStoredData = async (
       .then(toMapById),
 
     // Collections
-    ctx.store
-      .find(Collection, {
+    findInChunks([...collectionIds], (chunk) =>
+      ctx.store.find(Collection, {
         where: {
           network: ModelNetwork.POLYGON,
-          id: In([...collectionIds]),
+          id: In(chunk),
         },
       })
-      .then(toMapById),
+    ).then(toMapById),
 
     // Bids
-    ctx.store
-      .find(Bid, {
+    findInChunks([...bidIds], (chunk) =>
+      ctx.store.find(Bid, {
         relations: {
           nft: true,
         },
         where: {
-          id: In([...Array.from(bidIds.values())]),
+          id: In(chunk),
           network: ModelNetwork.POLYGON,
         },
       })
-      .then(toMapById),
+    ).then(toMapById),
 
     // Rarities
     ctx.store.find(Rarity).then(toMapById),
 
     // Wearables
-    ctx.store
-      .find(Wearable, {
+    findInChunks([...itemIds], (chunk) =>
+      ctx.store.find(Wearable, {
         where: {
-          id: In([...itemIds]),
+          id: In(chunk),
           network: ModelNetwork.POLYGON,
         },
       })
-      .then(toMapById),
+    ).then(toMapById),
 
     // Emotes
-    ctx.store
-      .find(Emote, {
+    findInChunks([...itemIds], (chunk) =>
+      ctx.store.find(Emote, {
         where: {
-          id: In([...itemIds]),
+          id: In(chunk),
         },
       })
-      .then(toMapById),
+    ).then(toMapById),
 
     // Metadatas
-    ctx.store
-      .find(Metadata, {
+    findInChunks(metadataIds, (chunk) =>
+      ctx.store.find(Metadata, {
         relations: {
           emote: true,
           wearable: true,
         },
         where: {
           network: ModelNetwork.POLYGON,
-          id: In([...metadataIds]),
+          id: In(chunk),
         },
       })
-      .then(toMapById),
+    ).then(toMapById),
   ]);
 
   // These queries depend on NFTs result
   const nftItemIds = Array.from(nfts.values()).map((nft) => nft.item?.id);
 
   // Second round of reads, which depend on the NFT result above.
+  const itemRelations = { collection: true, metadata: true };
   const [orders, items] = await Promise.all([
     // Orders (depends on nftIds)
-    ctx.store
-      .findBy(Order, {
-        nft: In([...Array.from(nftIds.values())]),
+    findInChunks(nftIds, (chunk) =>
+      ctx.store.findBy(Order, {
+        nft: In(chunk),
         network: ModelNetwork.POLYGON,
       })
-      .then(toMapById),
+    ).then(toMapById),
 
     // Items (depends on nftItemIds)
-    ctx.store
-      .find(Item, {
-        relations: {
-          collection: true,
-          metadata: true,
-        },
-        where: [
-          {
-            collection: In([...collectionIds]),
-            network: ModelNetwork.POLYGON,
-          },
-          {
-            id: In([...itemIdsFlat]),
-            network: ModelNetwork.POLYGON,
-          },
-          {
-            id: In([...nftItemIds]),
-            network: ModelNetwork.POLYGON,
-          },
-        ],
-      })
+    Promise.all([
+      findInChunks([...collectionIds], (chunk) =>
+        ctx.store.find(Item, {
+          relations: itemRelations,
+          where: { collection: In(chunk), network: ModelNetwork.POLYGON },
+        })
+      ),
+      findInChunks([...itemIdsFlat, ...nftItemIds], (chunk) =>
+        ctx.store.find(Item, {
+          relations: itemRelations,
+          where: { id: In(chunk), network: ModelNetwork.POLYGON },
+        })
+      ),
+    ])
+      .then((found) => found.flat())
       .then(toMapById),
   ]);
 
@@ -235,12 +231,12 @@ export const getStoredData = async (
     (id) => `${id}-${ModelNetwork.POLYGON}`
   );
 
-  const accounts = await ctx.store
-    .findBy(Account, {
-      id: In(accountIdsToLookFor),
+  const accounts = await findInChunks(accountIdsToLookFor, (chunk) =>
+    ctx.store.findBy(Account, {
+      id: In(chunk),
       network: ModelNetwork.POLYGON,
     })
-    .then(toMapById);
+  ).then(toMapById);
 
   return {
     counts,

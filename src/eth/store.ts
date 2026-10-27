@@ -20,6 +20,7 @@ import { Context } from "./processor";
 import { getAddresses } from "../common/utils/addresses";
 import { Network } from "@dcl/schemas";
 import { EthereumInMemoryState } from "./types";
+import { findInChunks } from "../common/utils/store";
 
 export const getStoredData = async (
   ctx: Context,
@@ -53,20 +54,23 @@ export const getStoredData = async (
   );
   // console.log("accountIdsToLookFor: ", accountIdsToLookFor);
 
-  const accounts = await ctx.store
-    .findBy(Account, {
-      id: In(accountIdsToLookFor),
+  const accounts = await findInChunks(accountIdsToLookFor, (chunk) =>
+    ctx.store.findBy(Account, {
+      id: In(chunk),
       network: ModelNetwork.ETHEREUM,
     })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
   // console.log("accounts: ", accounts);
 
-  const parcels = await ctx.store
-    .findBy(Parcel, { tokenId: In([...landTokenIds]) })
+  const parcels = await findInChunks([...landTokenIds], (chunk) =>
+    ctx.store.findBy(Parcel, { tokenId: In(chunk) })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
-  const estates = await ctx.store
-    .findBy(Estate, { tokenId: In([...estateTokenIds]) })
+  const estates = await findInChunks([...estateTokenIds], (chunk) =>
+    ctx.store.findBy(Estate, { tokenId: In(chunk) })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
   const addresses = getAddresses(Network.ETHEREUM);
@@ -94,8 +98,8 @@ export const getStoredData = async (
     ),
   ];
 
-  const nfts = await ctx.store
-    .find(NFT, {
+  const nfts = await findInChunks(nftIds, (chunk) =>
+    ctx.store.find(NFT, {
       relations: {
         owner: true,
         activeOrder: true,
@@ -103,27 +107,31 @@ export const getStoredData = async (
         item: true,
       },
       where: {
-        id: In(nftIds),
+        id: In(chunk),
         network: ModelNetwork.ETHEREUM,
       },
     })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
-  const orders = await ctx.store
-    .findBy(Order, {
-      nft: In([...Array.from(nftIds.values())]),
+  const orders = await findInChunks(nftIds, (chunk) =>
+    ctx.store.findBy(Order, {
+      nft: In(chunk),
       network: ModelNetwork.ETHEREUM,
       // id: In([...Array.from(nfts.values()).map((nft) => nft.activeOrder)]), // @TODO, revisit this
     })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
-  const datas = await ctx.store
-    .find(Data, {
-      where: [
-        { estate: In([...estateTokenIds]) },
-        { parcel: In([...landTokenIds]) },
-      ],
-    })
+  const datas = await Promise.all([
+    findInChunks([...estateTokenIds], (chunk) =>
+      ctx.store.find(Data, { where: { estate: In(chunk) } })
+    ),
+    findInChunks([...landTokenIds], (chunk) =>
+      ctx.store.find(Data, { where: { parcel: In(chunk) } })
+    ),
+  ])
+    .then((found) => found.flat())
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
   const wearablesIds: string[] = [];
@@ -133,24 +141,27 @@ export const getStoredData = async (
     }
   });
 
-  const wearables = await ctx.store
-    .findBy(Wearable, {
-      id: In([...Array.from(wearablesIds.values())]),
+  const wearables = await findInChunks(wearablesIds, (chunk) =>
+    ctx.store.findBy(Wearable, {
+      id: In(chunk),
       network: ModelNetwork.ETHEREUM,
     })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
-  const ens = await ctx.store
-    .findBy(ENS, {
-      tokenId: In([...Array.from(ensTokenIds.values())]),
+  const ens = await findInChunks([...ensTokenIds], (chunk) =>
+    ctx.store.findBy(ENS, {
+      tokenId: In(chunk),
     })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
-  const analytics = await ctx.store
-    .findBy(AnalyticsDayData, {
-      id: In([...Array.from(analyticsIds.values())]),
+  const analytics = await findInChunks([...analyticsIds], (chunk) =>
+    ctx.store.findBy(AnalyticsDayData, {
+      id: In(chunk),
       network: ModelNetwork.ETHEREUM,
     })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
   const counts = await ctx.store
@@ -159,25 +170,27 @@ export const getStoredData = async (
     })
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
-  const bids = await ctx.store
-    .find(Bid, {
+  const bids = await findInChunks([...bidIds], (chunk) =>
+    ctx.store.find(Bid, {
       relations: {
         nft: true,
       },
       where: {
-        id: In([...Array.from(bidIds.values())]),
+        id: In(chunk),
         network: ModelNetwork.ETHEREUM,
       },
     })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
-  const collections = await ctx.store
-    .find(Collection, {
+  const collections = await findInChunks([...collectionIds], (chunk) =>
+    ctx.store.find(Collection, {
       where: {
         network: ModelNetwork.ETHEREUM,
-        id: In([...collectionIds]),
+        id: In(chunk),
       },
     })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
   const metadataIds = [
@@ -186,36 +199,36 @@ export const getStoredData = async (
       .flat(),
   ];
 
-  const metadatas = await ctx.store
-    .find(Metadata, {
+  const metadatas = await findInChunks(metadataIds, (chunk) =>
+    ctx.store.find(Metadata, {
       relations: {
         emote: true,
         wearable: true,
       },
       where: {
         network: ModelNetwork.ETHEREUM,
-        id: In([...metadataIds]),
+        id: In(chunk),
       },
     })
+  )
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
-  const items = await ctx.store
-    .find(Item, {
-      relations: {
-        collection: true,
-        metadata: true,
-      },
-      where: [
-        {
-          collection: In([...collectionIds]),
-          network: ModelNetwork.ETHEREUM,
-        },
-        {
-          id: In([...itemIds.values()].flat()),
-          network: ModelNetwork.ETHEREUM,
-        },
-      ],
-    })
+  const itemRelations = { collection: true, metadata: true };
+  const items = await Promise.all([
+    findInChunks([...collectionIds], (chunk) =>
+      ctx.store.find(Item, {
+        relations: itemRelations,
+        where: { collection: In(chunk), network: ModelNetwork.ETHEREUM },
+      })
+    ),
+    findInChunks([...itemIds.values()].flat(), (chunk) =>
+      ctx.store.find(Item, {
+        relations: itemRelations,
+        where: { id: In(chunk), network: ModelNetwork.ETHEREUM },
+      })
+    ),
+  ])
+    .then((found) => found.flat())
     .then((q) => new Map(q.map((i) => [i.id, i])));
 
   return {
