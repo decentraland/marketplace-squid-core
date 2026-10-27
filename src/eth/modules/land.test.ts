@@ -26,6 +26,15 @@ describe("isParcelTokenId", () => {
       expect(isParcelTokenId(tokenId(0, -1000000))).toBe(false);
     });
   });
+
+  describe("when the coordinates are at the bounds", () => {
+    it("should be a parcel up to 999,999 either way, and not at 1,000,000", () => {
+      expect(isParcelTokenId(tokenId(999999, -999999))).toBe(true);
+      expect(isParcelTokenId(tokenId(-999999, 999999))).toBe(true);
+      expect(isParcelTokenId(tokenId(-1000000, 0))).toBe(false);
+      expect(isParcelTokenId(tokenId(0, 1000000))).toBe(false);
+    });
+  });
 });
 
 describe("decodeTokenIdsToCoordinates", () => {

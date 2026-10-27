@@ -581,6 +581,9 @@ run(dataSource, db, async (simpleCtx) => {
             // The contract also logged cancelling auctions that never existed, with no parcel
             // (block 5,662,897): there is no order to update, and the id has no coordinates.
             if (!isParcelTokenId(event.assetId)) {
+              console.log(
+                `ERROR: legacy auction event without a parcel skipped: block ${block.header.height}, tx ${log.transactionHash}, assetId ${event.assetId}`
+              );
               break;
             }
             addEventToStateIdsBasedOnCategory(
