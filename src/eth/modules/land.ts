@@ -22,10 +22,19 @@ function expandNegative128BitCast(value: bigint): number {
   return Number(value);
 }
 
+function insideBounds([x, y]: [number, number]): boolean {
+  return -1000000 < x && x < 1000000 && -1000000 < y && y < 1000000;
+}
+
+/** Whether a token id encodes a parcel's coordinates, as every LAND token id does. */
+export function isParcelTokenId(value: bigint): boolean {
+  return insideBounds(unsafeDecodeTokenId(value));
+}
+
 function decodeTokenId(value: bigint): [number, number] {
-  const [x, y] = unsafeDecodeTokenId(value);
-  if (-1000000 < x && x < 1000000 && -1000000 < y && y < 1000000) {
-    return [x, y];
+  const coordinates = unsafeDecodeTokenId(value);
+  if (insideBounds(coordinates)) {
+    return coordinates;
   } else {
     throw new Error("The coordinates should be inside bounds");
   }
