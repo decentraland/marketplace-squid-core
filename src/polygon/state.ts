@@ -234,7 +234,14 @@ export const getStoreContractData = async (
     const [chainFee, chainFeeOwner] = await Promise.all([
       storeContract.fee(),
       storeContract.feeOwner(),
-    ]);
+    ]).catch((e) => {
+      // Rethrown so the batch retries. Logged with the height so an RPC that cannot serve this
+      // historical state shows up as the same block failing again, not as a silent stall.
+      console.log(
+        `ERROR: could not read store contract data at block ${block.height - 1}: ${e.message}`
+      );
+      throw e;
+    });
     fee ??= chainFee;
     feeOwner ??= chainFeeOwner;
     storeFeeCache.write(STORE, { fee, feeOwner });

@@ -1181,7 +1181,7 @@ run(dataSource, db, async (simpleCtx) => {
                 raritiesSnapshotDirty = false;
               }
               collectionIds.add(log.address.toLowerCase()); // @TODO check lowercase if needed
-                events.push({
+              events.push({
                 topic,
                 event,
                 block,
