@@ -1,15 +1,20 @@
+import * as CollectionStoreABI from "../abi/CollectionStore";
 import * as OffChainMarketplaceABI from "../abi/DecentralandMarketplacePolygon";
 import type { BlockData, Log } from "../processor";
 import {
   setOffChainMarketplaceFeeCollector,
   setOffChainMarketplaceFeeRate,
   setOffChainMarketplaceRoyaltiesRate,
+  setStoreFee,
+  setStoreFeeOwner,
 } from "../state";
 
 export type FeeUpdateEventArgs =
   | OffChainMarketplaceABI.FeeCollectorUpdatedEventArgs
   | OffChainMarketplaceABI.FeeRateUpdatedEventArgs
-  | OffChainMarketplaceABI.RoyaltiesRateUpdatedEventArgs;
+  | OffChainMarketplaceABI.RoyaltiesRateUpdatedEventArgs
+  | CollectionStoreABI.SetFeeEventArgs
+  | CollectionStoreABI.SetFeeOwnerEventArgs;
 
 /** One fee update, shaped for the batch's ordered event list. */
 export type QueuedFeeUpdate = {
@@ -21,6 +26,7 @@ export type QueuedFeeUpdate = {
 
 const { FeeCollectorUpdated, FeeRateUpdated, RoyaltiesRateUpdated } =
   OffChainMarketplaceABI.events;
+const { SetFee, SetFeeOwner } = CollectionStoreABI.events;
 
 /**
  * Decodes a fee-update log into an entry for the batch's ordered event list, or null for any other
@@ -42,12 +48,19 @@ export function queueFeeUpdate(
       return { topic, event: FeeRateUpdated.decode(log), block, log };
     case RoyaltiesRateUpdated.topic:
       return { topic, event: RoyaltiesRateUpdated.decode(log), block, log };
+    case SetFee.topic:
+      return { topic, event: SetFee.decode(log), block, log };
+    case SetFeeOwner.topic:
+      return { topic, event: SetFeeOwner.decode(log), block, log };
     default:
       return null;
   }
 }
 
-/** Applies a queued fee update to the emitting marketplace's cache; false for any other topic. */
+/**
+ * Applies a queued fee update to the emitting marketplace's cache, or to the store's for SetFee and
+ * SetFeeOwner; false for any other topic.
+ */
 export function applyFeeUpdate(
   topic: string,
   log: { address: string },
@@ -71,6 +84,12 @@ export function applyFeeUpdate(
         log.address,
         (event as OffChainMarketplaceABI.RoyaltiesRateUpdatedEventArgs)._royaltiesRate
       );
+      return true;
+    case SetFee.topic:
+      setStoreFee((event as CollectionStoreABI.SetFeeEventArgs)._newFee);
+      return true;
+    case SetFeeOwner.topic:
+      setStoreFeeOwner((event as CollectionStoreABI.SetFeeOwnerEventArgs)._newFeeOwner);
       return true;
     default:
       return false;

@@ -450,7 +450,11 @@ export function handleTransferWearableV1(
   const id = getNFTId(collectionAddress, tokenId.toString());
 
   const nft = nfts.get(id) || new NFT({ id, network: ModelNetwork.ETHEREUM });
-  nft.collection = collection;
+  // The batch loads a collection only when it adds a wearable, so a plain transfer finds none here,
+  // and the NFT is loaded without its relation. Writing undefined would unlink it, so fall back to the
+  // item's collection and then to the contract itself, whose address is the collection's id.
+  nft.collection =
+    collection ?? item.collection ?? new Collection({ id: collectionAddress });
   nft.category = Category.wearable;
   nft.tokenId = tokenId;
   let toAccount = accounts.get(`${to}-${ModelNetwork.ETHEREUM}`);

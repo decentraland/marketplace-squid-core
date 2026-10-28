@@ -1,7 +1,7 @@
 import type { Block, Context } from "./processor";
 import {
-  beginOffChainMarketplaceFeeBatch,
-  endOffChainMarketplaceFeeBatch,
+  beginFeeBatch,
+  endFeeBatch,
   getOffChainMarketplaceContractData,
   resetOffChainMarketplaceContractData,
   setOffChainMarketplaceFeeCollector,
@@ -138,10 +138,10 @@ describe("getOffChainMarketplaceContractData", () => {
       });
       // Batch 100-200 raises the rate at block 120 and ends without committing. The range comes back
       // starting at 150, so block 120 is never replayed and the write it made is unrecoverable.
-      beginOffChainMarketplaceFeeBatch(100);
+      beginFeeBatch(100);
       setOffChainMarketplaceFeeRate(V3, BigInt(40000));
-      endOffChainMarketplaceFeeBatch(200);
-      beginOffChainMarketplaceFeeBatch(150);
+      endFeeBatch(200);
+      beginFeeBatch(150);
       retry = await getOffChainMarketplaceContractData(ctx, blockAt(160), V3);
     });
 
@@ -181,7 +181,7 @@ describe("getOffChainMarketplaceContractData", () => {
     let data: FeeConfig;
 
     beforeEach(async () => {
-      beginOffChainMarketplaceFeeBatch(N);
+      beginFeeBatch(N);
       setOffChainMarketplaceFeeRate(V3, BigInt(40000));
       ContractMock.mockImplementation(() => ({
         feeCollector: async () => FEE_COLLECTOR_SAFE,
@@ -208,11 +208,11 @@ describe("getOffChainMarketplaceContractData", () => {
       seed(V3, FEE_COLLECTOR_SAFE);
       // Batch 100-200: the trade is handled, then the update, then the batch ends — but the store never
       // commits, so the processor hands the same range back.
-      beginOffChainMarketplaceFeeBatch(100);
+      beginFeeBatch(100);
       firstAttempt = await getOffChainMarketplaceContractData(ctx, blockAt(100), V3);
       setOffChainMarketplaceFeeRate(V3, BigInt(40000));
-      endOffChainMarketplaceFeeBatch(200);
-      beginOffChainMarketplaceFeeBatch(100);
+      endFeeBatch(200);
+      beginFeeBatch(100);
       retry = await getOffChainMarketplaceContractData(ctx, blockAt(100), V3);
     });
 
@@ -226,10 +226,10 @@ describe("getOffChainMarketplaceContractData", () => {
 
     beforeEach(async () => {
       seed(V3, FEE_COLLECTOR_SAFE);
-      beginOffChainMarketplaceFeeBatch(100);
+      beginFeeBatch(100);
       setOffChainMarketplaceFeeRate(V3, BigInt(40000));
-      endOffChainMarketplaceFeeBatch(200);
-      beginOffChainMarketplaceFeeBatch(201);
+      endFeeBatch(200);
+      beginFeeBatch(201);
       data = await getOffChainMarketplaceContractData(ctx, blockAt(201), V3);
     });
 
@@ -243,9 +243,9 @@ describe("getOffChainMarketplaceContractData", () => {
 
     beforeEach(async () => {
       seed(V3, FEE_COLLECTOR_SAFE);
-      beginOffChainMarketplaceFeeBatch(100);
+      beginFeeBatch(100);
       setOffChainMarketplaceFeeRate(V3, BigInt(40000));
-      beginOffChainMarketplaceFeeBatch(100);
+      beginFeeBatch(100);
       data = await getOffChainMarketplaceContractData(ctx, blockAt(100), V3);
     });
 
@@ -259,12 +259,12 @@ describe("getOffChainMarketplaceContractData", () => {
 
     beforeEach(async () => {
       seed(V3, FEE_COLLECTOR_SAFE);
-      beginOffChainMarketplaceFeeBatch(100);
+      beginFeeBatch(100);
       setOffChainMarketplaceFeeRate(V3, BigInt(40000));
-      endOffChainMarketplaceFeeBatch(200);
-      beginOffChainMarketplaceFeeBatch(201);
+      endFeeBatch(200);
+      beginFeeBatch(201);
       // A rollback: the chain the promoted update came from is gone.
-      beginOffChainMarketplaceFeeBatch(150);
+      beginFeeBatch(150);
       ContractMock.mockImplementation(() => ({
         feeCollector: async () => FEE_COLLECTOR_SAFE,
         feeRate: async () => BigInt(25000),

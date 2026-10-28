@@ -16,6 +16,7 @@ import * as CommitteeABI from "./abi/Committee";
 import * as CollectionV2ABI from "./abi/CollectionV2";
 import * as RaritiesABI from "./abi/Rarity";
 import * as CollectionManagerABI from "./abi/CollectionManager";
+import * as CollectionStoreABI from "./abi/CollectionStore";
 import * as OffChainMarketplace from "./abi/DecentralandMarketplacePolygon";
 import * as OffChainMarketplaceV3 from "./abi/DecentralandMarketplacePolygonV3";
 import * as CreditsManagerABI from "./abi/CreditsManager";
@@ -228,6 +229,17 @@ export const dataSource = new DataSourceBuilder()
         OffChainMarketplace.events.FeeCollectorUpdated.topic,
         OffChainMarketplace.events.FeeRateUpdated.topic,
         OffChainMarketplace.events.RoyaltiesRateUpdated.topic,
+      ],
+    },
+  })
+  // The store's fee and fee owner, which every primary sale records. Without these the cache keeps the
+  // value read when the process started, so a reindex stamps a 2021 fee owner on every later mint.
+  .addLog({
+    where: {
+      address: [addresses.CollectionStore],
+      topic0: [
+        CollectionStoreABI.events.SetFee.topic,
+        CollectionStoreABI.events.SetFeeOwner.topic,
       ],
     },
   })
