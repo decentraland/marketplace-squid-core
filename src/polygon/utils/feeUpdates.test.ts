@@ -1,3 +1,4 @@
+import * as CollectionStoreABI from "../abi/CollectionStore";
 import * as OffChainMarketplaceABI from "../abi/DecentralandMarketplacePolygon";
 import type { Block, BlockData, Context } from "../processor";
 import {
@@ -6,6 +7,9 @@ import {
   setOffChainMarketplaceFeeCollector,
   setOffChainMarketplaceFeeRate,
   setOffChainMarketplaceRoyaltiesRate,
+  setStoreFee,
+  setStoreFeeOwner,
+  storeContractData,
 } from "../state";
 import {
   applyFeeUpdate,
@@ -50,6 +54,16 @@ const royaltiesRateUpdatedLog = (address: string, rate: bigint, logIndex: number
 // Both parameters are indexed, so the collector travels in the topics and the data is empty.
 const feeCollectorUpdatedLog = (address: string, collector: string, logIndex: number) =>
   feeLog(address, [FeeCollectorUpdated.topic, pad(CALLER), pad(collector)], "0x", logIndex);
+
+const STORE = "0x214ffc0f0103735728dc66b61a22e4f163e275ae";
+const { SetFee, SetFeeOwner } = CollectionStoreABI.events;
+
+// Both owners are indexed; the fees are not.
+const setFeeOwnerLog = (oldOwner: string, newOwner: string, logIndex: number) =>
+  feeLog(STORE, [SetFeeOwner.topic, pad(oldOwner), pad(newOwner)], "0x", logIndex);
+
+const setFeeLog = (oldFee: bigint, newFee: bigint, logIndex: number) =>
+  feeLog(STORE, [SetFee.topic], "0x" + word(oldFee) + word(newFee), logIndex);
 
 // A populated cache entry is returned without touching the chain, so no client is needed.
 const ctx = {} as unknown as Context;
@@ -240,6 +254,55 @@ describe("queueFeeUpdate", () => {
 
     it("should return null, leaving the log to its own handler", () => {
       expect(queued).toBeNull();
+    });
+  });
+});
+
+describe("when the store's fee configuration changes", () => {
+  beforeEach(() => {
+    setStoreFee(BigInt(25000));
+    setStoreFeeOwner(COMMITTEE_MULTISIG);
+  });
+
+  describe("and a fee-owner update is queued but not yet reached", () => {
+    beforeEach(() => {
+      queueFeeUpdate(SetFeeOwner.topic, setFeeOwnerLog(COMMITTEE_MULTISIG, FEE_COLLECTOR_SAFE, 7), block);
+    });
+
+    it("should leave the mints before it on the old owner", () => {
+      expect(storeContractData.feeOwner).toEqual(COMMITTEE_MULTISIG);
+    });
+  });
+
+  describe("and the fee-owner update is applied", () => {
+    beforeEach(() => {
+      const queued = queueFeeUpdate(
+        SetFeeOwner.topic,
+        setFeeOwnerLog(COMMITTEE_MULTISIG, FEE_COLLECTOR_SAFE, 7),
+        block
+      );
+      applyFeeUpdate(queued!.topic, queued!.log, queued!.event);
+    });
+
+    it("should give the mints after it the new owner and keep the fee", () => {
+      expect([storeContractData.feeOwner?.toLowerCase(), storeContractData.fee]).toEqual([
+        FEE_COLLECTOR_SAFE,
+        BigInt(25000),
+      ]);
+    });
+  });
+
+  describe("and a fee update is applied", () => {
+    beforeEach(() => {
+      const queued = queueFeeUpdate(SetFee.topic, setFeeLog(BigInt(25000), BigInt(50000), 8), block);
+      applyFeeUpdate(queued!.topic, queued!.log, queued!.event);
+    });
+
+    it("should change the fee and keep the owner", () => {
+      expect([storeContractData.fee, storeContractData.feeOwner]).toEqual([
+        BigInt(50000),
+        COMMITTEE_MULTISIG,
+      ]);
     });
   });
 });

@@ -83,8 +83,6 @@ import {
   getStoreContractData,
   setBidOwnerCutPerMillion,
   setMarketplaceOwnerCutPerMillion,
-  setStoreFee,
-  setStoreFeeOwner,
   beginOffChainMarketplaceFeeBatch,
   endOffChainMarketplaceFeeBatch,
 } from "./state";
@@ -608,7 +606,10 @@ run(dataSource, db, async (simpleCtx) => {
       getMarketplaceContractData(ctx, lastBlockHeader),
       getMarketplaceV2ContractData(ctx, lastBlockHeader),
       getBidV2ContractData(ctx, lastBlockHeader),
-      getStoreContractData(ctx, lastBlockHeader),
+      getStoreContractData(
+        ctx,
+        ctx.blocks.map((block) => block.header)
+      ),
     ]);
 
     // ⚡ OPTIMIZATION: Single pre-processing loop for all indexing needs
@@ -1020,7 +1021,9 @@ run(dataSource, db, async (simpleCtx) => {
           }
           case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic:
           case OffChainMarketplaceABI.events.FeeRateUpdated.topic:
-          case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic: {
+          case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic:
+          case CollectionStoreABI.events.SetFee.topic:
+          case CollectionStoreABI.events.SetFeeOwner.topic: {
             // Queued, not applied: pass two replays fee updates in log order (utils/feeUpdates).
             const queued = queueFeeUpdate(topic, log, block);
             if (!queued) {
@@ -1217,16 +1220,6 @@ run(dataSource, db, async (simpleCtx) => {
               log.address === addresses.Rarity ? Currency.MANA : Currency.USD
             );
             raritiesSnapshotDirty = true; // Mark snapshot as needing refresh
-            break;
-          }
-          case CollectionStoreABI.events.SetFee.topic: {
-            const event = CollectionStoreABI.events.SetFee.decode(log);
-            setStoreFee(event._newFee);
-            break;
-          }
-          case CollectionStoreABI.events.SetFeeOwner.topic: {
-            const event = CollectionStoreABI.events.SetFeeOwner.decode(log);
-            setStoreFeeOwner(event._newFeeOwner);
             break;
           }
           case CollectionManagerABI.events.RaritiesSet.topic: {
@@ -1495,6 +1488,8 @@ run(dataSource, db, async (simpleCtx) => {
         case OffChainMarketplaceABI.events.FeeCollectorUpdated.topic:
         case OffChainMarketplaceABI.events.FeeRateUpdated.topic:
         case OffChainMarketplaceABI.events.RoyaltiesRateUpdated.topic:
+        case CollectionStoreABI.events.SetFee.topic:
+        case CollectionStoreABI.events.SetFeeOwner.topic:
           applyFeeUpdate(topic, log, event as FeeUpdateEventArgs);
           break;
         case OffChainMarketplaceABI.events.Traded.topic:

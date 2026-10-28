@@ -187,14 +187,20 @@ const START_BLOCK_COLLECTION_STORE: Record<number, number> = {
   [ChainId.MATIC_MAINNET]: 15202567,
 };
 
-export const getStoreContractData = async (ctx: Context, block: Block) => {
+/**
+ * Reads the store's fee and fee owner once, at the batch's first block where the contract exists.
+ * From then on SetFee and SetFeeOwner keep them current, replayed in log order by the batch's second
+ * pass (utils/feeUpdates). Reading at a later block would hand that block's values to the mints before it.
+ */
+export const getStoreContractData = async (ctx: Context, headers: Block[]) => {
   const contractStartingBlock = START_BLOCK_COLLECTION_STORE[chainId];
-  
-  // Only fetch if contract exists at this block height
+  const block = headers.find((header) => header.height >= contractStartingBlock);
+
+  // Only fetch if contract exists in this batch
   if (
     (storeContractData.fee === undefined ||
       storeContractData.feeOwner === undefined) &&
-    block.height >= contractStartingBlock
+    block
   ) {
     console.log("INFO: Fetching store contract data for first time");
     const addresses = getAddresses(Network.MATIC);

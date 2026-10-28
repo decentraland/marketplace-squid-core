@@ -33,12 +33,15 @@ export function handleNameRegistered(
 
   const ens = new ENS({ id });
   ens.tokenId = BigInt(tokenId);
-  let owner = accounts.get(`${_caller}-${ModelNetwork.ETHEREUM}`);
-  if (!owner) {
-    owner = createAccount(_caller);
-    accounts.set(`${_caller}-${ModelNetwork.ETHEREUM}`, owner);
+  let caller = accounts.get(`${_caller}-${ModelNetwork.ETHEREUM}`);
+  if (!caller) {
+    caller = createAccount(_caller);
+    accounts.set(`${_caller}-${ModelNetwork.ETHEREUM}`, caller);
   }
-  ens.owner = owner;
+  // The batch handles names after every transfer, so the token's owner is already the one after this
+  // batch. The caller is only the owner when it kept the token: a router that registers and then hands
+  // the name over in the same transaction is not.
+  ens.owner = nfts.get(id)?.owner ?? caller;
   ens.caller = _caller;
   ens.beneficiary = _beneficiary;
   ens.labelHash = _labelHash;
