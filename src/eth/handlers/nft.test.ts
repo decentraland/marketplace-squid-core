@@ -48,6 +48,19 @@ describe("when a V1 wearable is transferred", () => {
     });
   });
 
+  describe("and neither the batch nor the item has the collection loaded", () => {
+    beforeEach(() => {
+      collections = new Map();
+      collection = undefined as never;
+      nfts = new Map([[NFT_ID, new NFT({ id: NFT_ID })]]);
+      transfer();
+    });
+
+    it("should link the NFT to the collection its contract is", () => {
+      expect(nfts.get(NFT_ID)?.collection?.id).toBe(COLLECTION);
+    });
+  });
+
   describe("and the batch loaded its collection", () => {
     let loaded: Collection;
 

@@ -32,7 +32,6 @@ import {
   BidV2ContractData,
   MarketplaceContractData,
   MarketplaceV2ContractData,
-  StoreContractData,
 } from "./state";
 import { TransferGiftCandidate } from "../common/utils/events";
 
@@ -103,7 +102,6 @@ export type PolygonInMemoryState = {
     log: Log & { transactionHash: string };
     transaction?: Transaction & { input: string };
     rarities?: Map<string, Rarity>;
-    storeContractData?: StoreContractData;
     marketplaceContractData?: MarketplaceContractData;
     marketplaceV2ContractData?: MarketplaceV2ContractData;
     bidV2ContractData?: BidV2ContractData;

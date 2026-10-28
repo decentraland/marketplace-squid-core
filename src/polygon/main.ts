@@ -83,8 +83,8 @@ import {
   getStoreContractData,
   setBidOwnerCutPerMillion,
   setMarketplaceOwnerCutPerMillion,
-  beginOffChainMarketplaceFeeBatch,
-  endOffChainMarketplaceFeeBatch,
+  beginFeeBatch,
+  endFeeBatch,
 } from "./state";
 import { getStoredData } from "./store";
 import { PolygonStoredData } from "./types";
@@ -344,7 +344,7 @@ const prometheus = new PrometheusServer();
 prometheus.setPort(Number(process.env.POLYGON_PROMETHEUS_PORT || 3001));
 run(dataSource, db, async (simpleCtx) => {
   // Fee writes stage per batch; the previous batch's are promoted only if this one starts past it.
-  beginOffChainMarketplaceFeeBatch(simpleCtx.blocks[0].header.height);
+  beginFeeBatch(simpleCtx.blocks[0].header.height);
   // The batch-processor base context is bare {store, blocks, isHead}; augment the
   // blocks (restores block.logs / log.transaction back-refs) and attach `_chain`
   // (RPC for contract reads) and a logger, so the rest of the handler and the ABI
@@ -527,7 +527,7 @@ run(dataSource, db, async (simpleCtx) => {
         "INFO: Batch contains important data: ",
         isThereImportantDataInBatch
       );
-      endOffChainMarketplaceFeeBatch(
+      endFeeBatch(
         ctx.blocks[ctx.blocks.length - 1].header.height
       );
       return;
@@ -601,15 +601,10 @@ run(dataSource, db, async (simpleCtx) => {
       cachedMarketplaceData,
       cachedMarketplaceV2Data,
       cachedBidV2Data,
-      cachedStoreData,
     ] = await Promise.all([
       getMarketplaceContractData(ctx, lastBlockHeader),
       getMarketplaceV2ContractData(ctx, lastBlockHeader),
       getBidV2ContractData(ctx, lastBlockHeader),
-      getStoreContractData(
-        ctx,
-        ctx.blocks.map((block) => block.header)
-      ),
     ]);
 
     // ⚡ OPTIMIZATION: Single pre-processing loop for all indexing needs
@@ -1186,8 +1181,7 @@ run(dataSource, db, async (simpleCtx) => {
                 raritiesSnapshotDirty = false;
               }
               collectionIds.add(log.address.toLowerCase()); // @TODO check lowercase if needed
-              // ⚡ Use pre-cached store contract data
-              events.push({
+                events.push({
                 topic,
                 event,
                 block,
@@ -1195,7 +1189,6 @@ run(dataSource, db, async (simpleCtx) => {
                 transaction: log.transaction,
                 // Use the current snapshot (only refreshed when rarities actually change)
                 rarities: currentRaritiesSnapshot,
-                storeContractData: cachedStoreData,
               });
             } else {
               console.log("ERROR: Event not decoded correctly");
@@ -1298,7 +1291,6 @@ run(dataSource, db, async (simpleCtx) => {
               );
               raritiesSnapshotDirty = false;
             }
-            // ⚡ Use pre-cached store contract data
             events.push({
               topic,
               event,
@@ -1307,7 +1299,6 @@ run(dataSource, db, async (simpleCtx) => {
               transaction: log.transaction,
               // Use the current snapshot (only refreshed when rarities actually change)
               rarities: currentRaritiesSnapshot,
-              storeContractData: cachedStoreData,
             });
 
             break;
@@ -1419,7 +1410,6 @@ run(dataSource, db, async (simpleCtx) => {
       log,
       transaction,
       rarities,
-      storeContractData,
       bidV2ContractData,
       marketplaceContractData,
       marketplaceV2ContractData,
@@ -1494,8 +1484,8 @@ run(dataSource, db, async (simpleCtx) => {
           break;
         case OffChainMarketplaceABI.events.Traded.topic:
         case OffChainMarketplaceV3ABI.events.Traded.topic: {
-          if (!storeContractData || !transaction) {
-            console.log("ERROR: storeContractData not found");
+          if (!transaction) {
+            console.log("ERROR: transaction not found");
             break;
           }
           await handleTraded(
@@ -1510,10 +1500,6 @@ run(dataSource, db, async (simpleCtx) => {
           break;
         }
         case CollectionV2ABI.events.Issue.topic:
-          if (!storeContractData) {
-            console.log("ERROR: storeContractData not found");
-            break;
-          }
           if (
             (event as CollectionV2ABI.IssueEventArgs)._caller ===
               addresses.OffChainMarketplace ||
@@ -1532,7 +1518,9 @@ run(dataSource, db, async (simpleCtx) => {
             transaction!,
             storedData,
             inMemoryData,
-            storeContractData
+            // Resolved here, in log order, so the store's fee updates before this mint are applied
+            // and the ones after it are not.
+            await getStoreContractData(ctx, block.header)
           );
           break;
         case CollectionV2ABI.events.SetApproved.topic:
@@ -1924,7 +1912,7 @@ run(dataSource, db, async (simpleCtx) => {
 `);
     }
 
-    endOffChainMarketplaceFeeBatch(
+    endFeeBatch(
       ctx.blocks[ctx.blocks.length - 1].header.height
     );
     ctx.log.info(

@@ -80,10 +80,6 @@ export let bidV2ContractData: BidV2ContractData = {
   royaltiesCutPerMillion: undefined,
 };
 
-export let storeContractData: StoreContractData = {
-  fee: undefined,
-  feeOwner: undefined,
-};
 
 export type OffChainMarketplaceContractData = {
   feeCollector: string | undefined;
@@ -105,15 +101,37 @@ const offChainMarketplaceFeeCache = createFeeCache<OffChainMarketplaceContractDa
   })
 );
 
-export const beginOffChainMarketplaceFeeBatch = (fromBlock: number) =>
-  offChainMarketplaceFeeCache.begin(fromBlock);
+/**
+ * The store's fee and fee owner, which every primary sale records. One entry, staged like the
+ * marketplaces' so a failed batch cannot leave a later fee behind for its retry.
+ */
+const STORE = "store";
+const storeFeeCache = createFeeCache<StoreContractData>(
+  () => ({ fee: undefined, feeOwner: undefined }),
+  (base, patch) => ({
+    fee: patch.fee ?? base.fee,
+    feeOwner: patch.feeOwner ?? base.feeOwner,
+  })
+);
 
-export const endOffChainMarketplaceFeeBatch = (toBlock: number) =>
+/** Opens a batch on every fee cache: the marketplaces' and the store's. */
+export const beginFeeBatch = (fromBlock: number) => {
+  offChainMarketplaceFeeCache.begin(fromBlock);
+  storeFeeCache.begin(fromBlock);
+};
+
+/** Ends a batch on every fee cache, parking its writes until a later batch starts past `toBlock`. */
+export const endFeeBatch = (toBlock: number) => {
   offChainMarketplaceFeeCache.end(toBlock);
+  storeFeeCache.end(toBlock);
+};
 
 /** Empties the committed cache and any open or pending batch. For tests. */
 export const resetOffChainMarketplaceContractData = () =>
   offChainMarketplaceFeeCache.reset();
+
+/** Empties the store's cache and any open or pending batch. For tests. */
+export const resetStoreContractData = () => storeFeeCache.reset();
 
 const writeOffChainMarketplaceContractData = (
   marketplaceAddress: string,
@@ -188,38 +206,40 @@ const START_BLOCK_COLLECTION_STORE: Record<number, number> = {
 };
 
 /**
- * Reads the store's fee and fee owner once, at the batch's first block where the contract exists.
- * From then on SetFee and SetFeeOwner keep them current, replayed in log order by the batch's second
- * pass (utils/feeUpdates). Reading at a later block would hand that block's values to the mints before it.
+ * The store's fee configuration in force for a sale in `block`. Once seeded, SetFee and SetFeeOwner keep
+ * it current, replayed in log order by the batch's second pass (utils/feeUpdates).
+ *
+ * A cold cache is seeded from the block BEFORE the sale's: state at N is post-block, so an update later
+ * in N would leak into a sale earlier in it. Updates earlier in N have already been replayed into the
+ * fields that are present, so the missing ones are exactly those nothing changed before this sale.
+ * A failed read throws, failing the batch so it is retried: carrying on would skip the sale for good.
+ * Before the store exists there is nothing to read and no store sale, so the fields stay undefined.
  */
-export const getStoreContractData = async (ctx: Context, headers: Block[]) => {
-  const contractStartingBlock = START_BLOCK_COLLECTION_STORE[chainId];
-  const block = headers.find((header) => header.height >= contractStartingBlock);
-
-  // Only fetch if contract exists in this batch
+export const getStoreContractData = async (
+  ctx: Context,
+  block: Block
+): Promise<StoreContractData> => {
+  let { fee, feeOwner } = storeFeeCache.view(STORE);
   if (
-    (storeContractData.fee === undefined ||
-      storeContractData.feeOwner === undefined) &&
-    block
+    (fee === undefined || feeOwner === undefined) &&
+    block.height - 1 >= START_BLOCK_COLLECTION_STORE[chainId]
   ) {
     console.log("INFO: Fetching store contract data for first time");
     const addresses = getAddresses(Network.MATIC);
     const storeContract = new CollectionStoreContract(
       ctx,
-      block,
+      { ...block, height: block.height - 1 },
       addresses.CollectionStore
     );
-    try {
-      storeContractData.fee = await storeContract.fee();
-      storeContractData.feeOwner = await storeContract.feeOwner();
-    } catch (e: any) {
-      // The contract may not be readable at this (historical) block on some RPC
-      // providers — e.g. fee() returns 0x and decoding throws. Leave the data
-      // undefined and retry on a later batch rather than crashing the processor.
-      console.log(`WARN: could not fetch store contract data: ${e.message}`);
-    }
+    const [chainFee, chainFeeOwner] = await Promise.all([
+      storeContract.fee(),
+      storeContract.feeOwner(),
+    ]);
+    fee ??= chainFee;
+    feeOwner ??= chainFeeOwner;
+    storeFeeCache.write(STORE, { fee, feeOwner });
   }
-  return storeContractData;
+  return { fee, feeOwner };
 };
 
 const START_BLOCK_MARKETPLACEV1: Record<number, number> = {
@@ -315,11 +335,11 @@ export const getBidV2ContractData = async (ctx: Context, block: Block) => {
 };
 
 export const setStoreFee = (fee: bigint) => {
-  storeContractData.fee = fee;
+  storeFeeCache.write(STORE, { fee });
 };
 
 export const setStoreFeeOwner = (feeOwner: string) => {
-  storeContractData.feeOwner = feeOwner;
+  storeFeeCache.write(STORE, { feeOwner });
 };
 
 export let marketplaceOwnerCutPerMillion: bigint | null = null;

@@ -7,9 +7,10 @@ import {
   setOffChainMarketplaceFeeCollector,
   setOffChainMarketplaceFeeRate,
   setOffChainMarketplaceRoyaltiesRate,
+  getStoreContractData,
+  resetStoreContractData,
   setStoreFee,
   setStoreFeeOwner,
-  storeContractData,
 } from "../state";
 import {
   applyFeeUpdate,
@@ -259,7 +260,11 @@ describe("queueFeeUpdate", () => {
 });
 
 describe("when the store's fee configuration changes", () => {
+  // Both fields seeded, so reading the configuration never touches the chain.
+  const store = () => getStoreContractData(ctx, header);
+
   beforeEach(() => {
+    resetStoreContractData();
     setStoreFee(BigInt(25000));
     setStoreFeeOwner(COMMITTEE_MULTISIG);
   });
@@ -269,8 +274,8 @@ describe("when the store's fee configuration changes", () => {
       queueFeeUpdate(SetFeeOwner.topic, setFeeOwnerLog(COMMITTEE_MULTISIG, FEE_COLLECTOR_SAFE, 7), block);
     });
 
-    it("should leave the mints before it on the old owner", () => {
-      expect(storeContractData.feeOwner).toEqual(COMMITTEE_MULTISIG);
+    it("should leave the mints before it on the old owner", async () => {
+      expect((await store()).feeOwner).toEqual(COMMITTEE_MULTISIG);
     });
   });
 
@@ -284,8 +289,9 @@ describe("when the store's fee configuration changes", () => {
       applyFeeUpdate(queued!.topic, queued!.log, queued!.event);
     });
 
-    it("should give the mints after it the new owner and keep the fee", () => {
-      expect([storeContractData.feeOwner?.toLowerCase(), storeContractData.fee]).toEqual([
+    it("should give the mints after it the new owner and keep the fee", async () => {
+      const { feeOwner, fee } = await store();
+      expect([feeOwner?.toLowerCase(), fee]).toEqual([
         FEE_COLLECTOR_SAFE,
         BigInt(25000),
       ]);
@@ -298,8 +304,9 @@ describe("when the store's fee configuration changes", () => {
       applyFeeUpdate(queued!.topic, queued!.log, queued!.event);
     });
 
-    it("should change the fee and keep the owner", () => {
-      expect([storeContractData.fee, storeContractData.feeOwner]).toEqual([
+    it("should change the fee and keep the owner", async () => {
+      const { fee, feeOwner } = await store();
+      expect([fee, feeOwner]).toEqual([
         BigInt(50000),
         COMMITTEE_MULTISIG,
       ]);

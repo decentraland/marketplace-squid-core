@@ -50,6 +50,19 @@ describe("when a name is registered", () => {
     });
   });
 
+  describe("and the batch only re-registers a name whose token it loaded from the store", () => {
+    const HOLDER = "0x0000000000000000000000000000000000000c0c";
+
+    beforeEach(() => {
+      nfts.set(ID, new NFT({ id: ID, owner: createAccount(HOLDER) }));
+      handleNameRegistered(registered, ensMap, nfts, accounts);
+    });
+
+    it("should keep the stored owner", () => {
+      expect(ensMap.get(ID)?.owner.id).toEqual(`${HOLDER}-ETHEREUM`);
+    });
+  });
+
   describe("and the batch holds no transfer of its token", () => {
     beforeEach(() => {
       handleNameRegistered(registered, ensMap, nfts, accounts);
