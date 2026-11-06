@@ -58,13 +58,19 @@ else
   echo "Creating new user: $NEW_DB_USER"
 
   GRANTS=""
+  # Roles are interpolated into SQL, so only plain identifiers are accepted; -f keeps `*` from globbing.
+  set -f
   for ROLE in $READER_ROLES; do
+    case $ROLE in
+      *[![:lower:][:digit:]_]*) echo "Error: invalid reader role '$ROLE' in READER_ROLES"; exit 1 ;;
+    esac
     for SCHEMA in $NEW_SCHEMA_NAME eth_processor_$NEW_SCHEMA_NAME polygon_processor_$NEW_SCHEMA_NAME; do
       GRANTS="$GRANTS
     GRANT USAGE ON SCHEMA $SCHEMA TO \"$ROLE\";
     ALTER DEFAULT PRIVILEGES FOR ROLE $NEW_DB_USER IN SCHEMA $SCHEMA GRANT SELECT ON TABLES TO \"$ROLE\";"
     done
   done
+  set +f
 
   # One transaction: a failed grant (a reader role that does not exist, say) rolls back the schema and
   # the user too, instead of leaving them behind unregistered, and the squid does not start.

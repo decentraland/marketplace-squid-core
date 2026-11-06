@@ -41,3 +41,14 @@ sqd process:eth # Ethereum processor
 sqd process:polygon # Polygon processor
 sqd serve       # GraphQL server
 ```
+
+## Deployment
+
+On ECS, `indexer.sh` gives every new commit its own schema (`marketplace_squid_<timestamp>`) and user. The squid management server promotes a schema by renaming it to `squid_marketplace`, and the schema's grants come along.
+
+Read access for other services is granted when the schema is created:
+
+- The users hardcoded at the top of `indexer.sh`.
+- `READER_ROLES`: an optional, space-separated list of extra roles. Each one gets `USAGE` and `SELECT` on the deployment schema and its two processor state schemas. Every role must already exist, or the deployment fails to start.
+
+Grants only reach schemas created after a role is added. Grant a new role on the live `squid_marketplace` by hand.
