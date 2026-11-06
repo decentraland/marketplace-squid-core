@@ -11,6 +11,8 @@ MARKETPLACE_TRADES_MV_ROLE="mv_trades_owner"
 REPORTING_READER_USER="meltano_dapps_ro"
 SQUIDS_PUBLIC_TABLE="squids"
 MARKETPLACE_SCHEMA="marketplace"
+# Extra read-only consumers, space-separated, granted on top of the users above. Each role must exist.
+READER_ROLES=${READER_ROLES:-}
 
 # Get commit hash from environment variable
 COMMIT_HASH=${COMMIT_HASH:-local}
@@ -55,8 +57,19 @@ else
   echo "Creating new schema: $NEW_SCHEMA_NAME"
   echo "Creating new user: $NEW_DB_USER"
 
-  # Connect to the database and create the new schema and user
-  psql -v ON_ERROR_STOP=1 --username "$DB_USER" --dbname "$DB_NAME" --host "$DB_HOST" --port "$DB_PORT" <<-EOSQL
+  GRANTS=""
+  for ROLE in $READER_ROLES; do
+    for SCHEMA in $NEW_SCHEMA_NAME eth_processor_$NEW_SCHEMA_NAME polygon_processor_$NEW_SCHEMA_NAME; do
+      GRANTS="$GRANTS
+    GRANT USAGE ON SCHEMA $SCHEMA TO \"$ROLE\";
+    ALTER DEFAULT PRIVILEGES FOR ROLE $NEW_DB_USER IN SCHEMA $SCHEMA GRANT SELECT ON TABLES TO \"$ROLE\";"
+    done
+  done
+
+  # One transaction: a failed grant (a reader role that does not exist, say) rolls back the schema and
+  # the user too, instead of leaving them behind unregistered, and the squid does not start.
+  psql -v ON_ERROR_STOP=1 --username "$DB_USER" --dbname "$DB_NAME" --host "$DB_HOST" --port "$DB_PORT" <<-EOSQL || exit 1
+    BEGIN;
     CREATE SCHEMA $NEW_SCHEMA_NAME;
     CREATE USER $NEW_DB_USER WITH PASSWORD '$DB_PASSWORD';
     GRANT ALL PRIVILEGES ON SCHEMA $NEW_SCHEMA_NAME TO $NEW_DB_USER;
@@ -95,11 +108,15 @@ else
     GRANT SELECT, INSERT, UPDATE ON TABLE $SQUIDS_PUBLIC_TABLE TO $NEW_DB_USER; 
 
     -- Add new user to mv_trades_owner
-    GRANT $MARKETPLACE_TRADES_MV_ROLE TO $NEW_DB_USER;    
+    GRANT $MARKETPLACE_TRADES_MV_ROLE TO $NEW_DB_USER;
+
+    -- Extra readers from READER_ROLES
+    $GRANTS
 
     -- Insert a new record into the indexers table
     INSERT INTO public.indexers (service, schema, db_user, created_at, commit_hash)
     VALUES ('$SERVICE_NAME', '$NEW_SCHEMA_NAME', '$NEW_DB_USER', NOW(), '$COMMIT_HASH');
+    COMMIT;
 EOSQL
 fi
 
