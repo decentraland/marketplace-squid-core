@@ -1,4 +1,4 @@
-FROM node:24-alpine@sha256:6a1c190e17215d844926b0677f4bf87273ff7d5e54db06d3b5b5863ab0b09a3d AS node
+FROM node:24-alpine@sha256:98e4e60b35fd50143e1838da2957488c25aa3a3efbd48bb679923f77d6d3d873 AS node
 FROM node AS node-with-gyp
 RUN apk add --no-cache g++ make python3
 
